@@ -1,0 +1,55 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{0915715A-AB35-4364-BC3A-BE5077F50E9A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScumOxygen.Core", "src\ScumOxygen.Core\ScumOxygen.Core.csproj", "{D292BBB6-DA5A-4186-8C07-D8345A25C482}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScumOxygen.Rcon", "src\ScumOxygen.Rcon\ScumOxygen.Rcon.csproj", "{396298DF-6425-42C1-807C-15BDE9DDA34F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScumOxygen.Tests", "src\ScumOxygen.Tests\ScumOxygen.Tests.csproj", "{60222580-6F83-471B-B0CB-10EC6FDF3315}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScumOxygen.Scripting", "src\ScumOxygen.Scripting\ScumOxygen.Scripting.csproj", "{97C1F20E-1C4E-4325-8636-9808D25E3453}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScumOxygen.Cli", "src\ScumOxygen.Cli\ScumOxygen.Cli.csproj", "{EE26CEB9-6090-4261-B56D-955198571995}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D292BBB6-DA5A-4186-8C07-D8345A25C482}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D292BBB6-DA5A-4186-8C07-D8345A25C482}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D292BBB6-DA5A-4186-8C07-D8345A25C482}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D292BBB6-DA5A-4186-8C07-D8345A25C482}.Release|Any CPU.Build.0 = Release|Any CPU
+		{396298DF-6425-42C1-807C-15BDE9DDA34F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{396298DF-6425-42C1-807C-15BDE9DDA34F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{396298DF-6425-42C1-807C-15BDE9DDA34F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{396298DF-6425-42C1-807C-15BDE9DDA34F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{60222580-6F83-471B-B0CB-10EC6FDF3315}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{60222580-6F83-471B-B0CB-10EC6FDF3315}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{60222580-6F83-471B-B0CB-10EC6FDF3315}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{60222580-6F83-471B-B0CB-10EC6FDF3315}.Release|Any CPU.Build.0 = Release|Any CPU
+		{97C1F20E-1C4E-4325-8636-9808D25E3453}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{97C1F20E-1C4E-4325-8636-9808D25E3453}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{97C1F20E-1C4E-4325-8636-9808D25E3453}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{97C1F20E-1C4E-4325-8636-9808D25E3453}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EE26CEB9-6090-4261-B56D-955198571995}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EE26CEB9-6090-4261-B56D-955198571995}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EE26CEB9-6090-4261-B56D-955198571995}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EE26CEB9-6090-4261-B56D-955198571995}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{D292BBB6-DA5A-4186-8C07-D8345A25C482} = {0915715A-AB35-4364-BC3A-BE5077F50E9A}
+		{396298DF-6425-42C1-807C-15BDE9DDA34F} = {0915715A-AB35-4364-BC3A-BE5077F50E9A}
+		{60222580-6F83-471B-B0CB-10EC6FDF3315} = {0915715A-AB35-4364-BC3A-BE5077F50E9A}
+		{97C1F20E-1C4E-4325-8636-9808D25E3453} = {0915715A-AB35-4364-BC3A-BE5077F50E9A}
+		{EE26CEB9-6090-4261-B56D-955198571995} = {0915715A-AB35-4364-BC3A-BE5077F50E9A}
+	EndGlobalSection
+EndGlobal

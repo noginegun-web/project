@@ -1,0 +1,40 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0/win-x64",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {},
+    ".NETCoreApp,Version=v8.0/win-x64": {
+      "ScumOxygen.SamplePlugin/1.0.0": {
+        "dependencies": {
+          "ScumOxygen.Core": "1.0.0"
+        },
+        "runtime": {
+          "ScumOxygen.SamplePlugin.dll": {}
+        }
+      },
+      "ScumOxygen.Core/1.0.0": {
+        "runtime": {
+          "ScumOxygen.Core.dll": {
+            "assemblyVersion": "1.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "ScumOxygen.SamplePlugin/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "ScumOxygen.Core/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SCUM Oxygen</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo"></div>
+        <div>
+          <div class="title">Панель управления</div>
+          <div class="subtitle">SCUM Oxygen</div>
+        </div>
+      </div>
+
+      <div class="server-block">
+        <label>Подключение</label>
+        <input id="serverHost" placeholder="IP:PORT (например 213.159.78.70:8090)" />
+        <input id="apiKey" type="password" placeholder="API ключ (X-API-KEY)" />
+        <button class="btn accent" id="connectBtn">Подключиться</button>
+        <label for="serverSelect">Сервер</label>
+        <select id="serverSelect"></select>
+        <div class="server-status">
+          <span class="dot" id="serverStatusDot"></span>
+          <span id="serverStatusText">не в сети</span>
+        </div>
+      </div>
+
+        <nav class="nav">
+          <button class="nav-link active" data-page="servers">Серверы</button>
+          <button class="nav-link" data-page="players">Игроки</button>
+          <button class="nav-link" data-page="map">Карта</button>
+          <button class="nav-link" data-page="squads">Отряды</button>
+          <button class="nav-link" data-page="chat">Чат</button>
+          <button class="nav-link" data-page="kills">Убийства</button>
+          <button class="nav-link" data-page="economy">Экономика</button>
+          <button class="nav-link" data-page="plugins">Плагины</button>
+          <button class="nav-link" data-page="downloads">Загрузки</button>
+          <button class="nav-link" data-page="logs">Логи</button>
+        </nav>
+
+      <div class="sidebar-footer">
+        <div class="hint">Статус сервера и команды доступны без RCON через очередь.</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="crumbs" id="breadcrumbs">Платформа / Серверы</div>
+        <div class="top-actions">
+          <button class="btn ghost" id="refreshCurrent">Обновить</button>
+          <div class="status-pill" id="rconStatus">RCON: неизвестно</div>
+          <div class="status-pill" id="playersCount">Игроки: 0</div>
+        </div>
+      </header>
+
+      <section class="page active" data-page="servers">
+        <div class="page-header">
+          <div>
+            <h2>Серверы</h2>
+            <p>Подключенные SCUM серверы и доступ к управлению.</p>
+          </div>
+          <button class="btn accent" id="createServerBtn">Создать сервер</button>
+        </div>
+        <div id="serverList" class="card-grid"></div>
+      </section>
+
+      <section class="page" data-page="players">
+        <div class="page-header">
+          <div>
+            <h2>Игроки</h2>
+            <p>Онлайн игроки на выбранном сервере.</p>
+          </div>
+          <button class="btn ghost" id="refreshPlayers">Обновить</button>
+        </div>
+        <div class="players-summary" id="playersSummary"></div>
+        <div class="card players-toolbar">
+          <input id="playersSearch" placeholder="Поиск по нику, SteamID, alias или IP" />
+          <select id="playersSort">
+            <option value="name">Сортировка: имя</option>
+            <option value="money">Сортировка: деньги</option>
+            <option value="fame">Сортировка: слава</option>
+            <option value="playtime">Сортировка: наиграно</option>
+            <option value="login">Сортировка: последний вход</option>
+          </select>
+          <div class="muted players-toolbar-note">Экипировка и точные координаты автоматически усилятся после native hooks.</div>
+        </div>
+        <div class="players-grid" id="playersList"></div>
+      </section>
+
+      <section class="page" data-page="map">
+        <div class="page-header">
+          <div>
+            <h2>Живая карта</h2>
+            <p>Просмотр людей, машин, сундуков и флагов в реальном времени.</p>
+          </div>
+          <div class="row">
+            <button class="btn ghost" id="refreshMap">Обновить</button>
+            <button class="btn ghost" id="mapZoomOut">-</button>
+            <button class="btn ghost" id="mapReset">Сброс</button>
+            <button class="btn ghost" id="mapZoomIn">+</button>
+          </div>
+        </div>
+
+        <div class="map-shell">
+          <div class="card map-card">
+            <div class="map-toolbar">
+              <div class="map-toggle-row">
+                <label class="map-toggle"><input type="checkbox" id="mapPlayersToggle" checked /> Люди</label>
+                <label class="map-toggle"><input type="checkbox" id="mapVehiclesToggle" checked /> Машины</label>
+                <label class="map-toggle"><input type="checkbox" id="mapChestsToggle" checked /> Сундуки</label>
+                <label class="map-toggle"><input type="checkbox" id="mapFlagsToggle" checked /> Флаги</label>
+              </div>
+              <div class="map-toolbar-note">Колесо мыши = масштаб, левая кнопка = перемещение карты.</div>
+            </div>
+            <div class="map-meta" id="mapMeta"></div>
+            <div class="map-viewport" id="mapViewport">
+              <div class="map-scene" id="mapScene">
+                <img id="mapImage" alt="Карта SCUM" />
+                <div class="map-grid-overlay"></div>
+                <div class="map-markers" id="mapMarkers"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="map-side">
+            <div class="card">
+              <h3>Слои</h3>
+              <div class="map-layer-stats" id="mapLayerStats"></div>
+            </div>
+            <div class="card">
+              <h3>Выбранная точка</h3>
+              <div id="mapSelection" class="muted">Ничего не выбрано.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" data-page="squads">
+        <div class="page-header">
+          <div>
+            <h2>Отряды</h2>
+            <p>Список отрядов и участников.</p>
+          </div>
+          <button class="btn ghost" id="refreshSquads">Обновить</button>
+        </div>
+        <div class="card" id="squadsList">Нет данных по отрядам.</div>
+      </section>
+
+      <section class="page" data-page="chat">
+        <div class="page-header">
+          <div>
+            <h2>Чат</h2>
+            <p>Последние сообщения и отправка объявлений.</p>
+          </div>
+          <button class="btn ghost" id="refreshChat">Обновить</button>
+        </div>
+        <div class="card">
+          <div class="chat-filters">
+            <select id="chatChannel">
+              <option value="all">Все каналы</option>
+              <option value="Global">Глобальный</option>
+              <option value="Local">Локальный</option>
+              <option value="Squad">Отряд</option>
+              <option value="Admin">Админ</option>
+            </select>
+            <input id="chatSearch" placeholder="Поиск по сообщению или игроку" />
+          </div>
+          <div class="chat-list" id="chatList"></div>
+          <div class="chat-send">
+            <select id="chatSendChannel">
+              <option value="Global">Глобальный</option>
+              <option value="Local">Локальный</option>
+              <option value="Squad">Отряд</option>
+              <option value="Admin">Админ</option>
+            </select>
+            <input id="chatMessage" placeholder="Текст сообщения" />
+            <button class="btn accent" id="sendChat">Отправить</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" data-page="kills">
+        <div class="page-header">
+          <div>
+            <h2>Убийства</h2>
+            <p>Последние убийства на сервере.</p>
+          </div>
+          <button class="btn ghost" id="refreshKills">Обновить</button>
+        </div>
+        <div class="card">
+          <div class="kills-list" id="killsList"></div>
+        </div>
+      </section>
+
+      <section class="page" data-page="economy">
+        <div class="page-header">
+          <div>
+            <h2>Экономика</h2>
+            <p>Топ по деньгам и славе.</p>
+          </div>
+          <button class="btn ghost" id="refreshEconomy">Обновить</button>
+        </div>
+        <div class="card-grid">
+          <div class="card">
+            <h3>Топ по деньгам</h3>
+            <div class="table" id="economyMoney"></div>
+          </div>
+          <div class="card">
+            <h3>Топ по славе</h3>
+            <div class="table" id="economyFame"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" data-page="plugins">
+        <div class="page-header">
+          <div>
+            <h2>Плагины</h2>
+            <p>Редактирование и перезагрузка скриптов.</p>
+          </div>
+          <div class="row">
+            <button class="btn ghost" id="reloadBtn">Перезагрузить</button>
+            <button class="btn ghost" id="deleteBtn">Удалить</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="row">
+            <select id="pluginSelect"></select>
+            <input id="pluginName" placeholder="Имя плагина" />
+            <button class="btn accent" id="saveBtn">Сохранить</button>
+          </div>
+          <textarea id="editor" spellcheck="false"></textarea>
+        </div>
+      </section>
+
+      <section class="page" data-page="downloads">
+        <div class="page-header">
+          <div>
+            <h2>Загрузки</h2>
+            <p>Сборка, установка и обновления.</p>
+          </div>
+          <button class="btn accent" id="downloadPluginBtn">Скачать плагин</button>
+        </div>
+        <div class="card-grid">
+          <div class="card">
+            <h3>Последний релиз</h3>
+            <div class="muted">v0.2 (локальная сборка)</div>
+            <div class="pill-row">
+              <span class="pill">.NET 8</span>
+              <span class="pill">Windows</span>
+            </div>
+            <div class="muted">Файл: plugin.zip</div>
+          </div>
+              <div class="card">
+                <h3>Инструкция</h3>
+                <ol class="steps">
+                  <li>Скопируйте DLL и папку ScumOxygen в каталог сервера.</li>
+                  <li>Запустите сервер с -fileopenlog.</li>
+                  <li>Откройте локальную панель, укажите IP:PORT и API ключ.</li>
+                </ol>
+              </div>
+              <div class="card">
+                <h3>Команда запуска</h3>
+                <div class="codebox">SCUMServer.exe -log -fileopenlog</div>
+                <div class="muted">Проверьте порт и ключ в runtime.json</div>
+              </div>
+        </div>
+      </section>
+
+      <section class="page" data-page="logs">
+        <div class="page-header">
+          <div>
+            <h2>Логи</h2>
+            <p>Текущее состояние и вывод плагина.</p>
+          </div>
+          <button class="btn ghost" id="refreshLogs">Обновить</button>
+        </div>
+        <div class="card">
+          <pre id="logs"></pre>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal hidden" id="commandModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="commandTitle">Команда сервера</h3>
+        <button class="icon-btn" data-close="commandModal">×</button>
+      </div>
+      <div class="modal-body">
+        <input id="commandInput" placeholder="Введите команду" />
+        <div class="muted" id="commandHint">Команды выполняются через очередь сервера.</div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" data-close="commandModal">Отмена</button>
+        <button class="btn accent" id="sendCommand">Выполнить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="spawnModal">
+    <div class="modal-card wide">
+      <div class="modal-header">
+        <h3>Выдать предмет</h3>
+        <button class="icon-btn" data-close="spawnModal">×</button>
+      </div>
+      <div class="modal-body grid">
+        <div class="left">
+          <input id="itemSearch" placeholder="Поиск предмета" />
+          <div class="category-list" id="itemCategories"></div>
+        </div>
+        <div class="right">
+          <div class="item-grid" id="itemGrid"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div class="selected" id="itemSelected">Не выбран предмет</div>
+        <div class="row">
+          <input id="spawnItem" placeholder="ItemId или путь" />
+          <input id="spawnQty" type="number" min="1" value="1" />
+          <button class="btn accent" id="spawnItemBtn">Выдать</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="./app.js"></script>
+</body>
+</html>
