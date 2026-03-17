@@ -137,7 +137,16 @@ public sealed class PlayerBase
     public bool HasPermission(string permission)
     {
         if (string.IsNullOrWhiteSpace(permission)) return true;
-        return Oxygen.Permissions.HasPermission(SteamId, permission);
+        if (string.IsNullOrWhiteSpace(SteamId)) return false;
+
+        try
+        {
+            return Oxygen.Permissions.HasPermission(SteamId, permission);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public void Reply(string message) => Reply(message, Color.Blue);

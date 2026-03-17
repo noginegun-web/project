@@ -93,10 +93,8 @@ if (Test-Path $webSourceDir) {
 
 $targetPluginSourceDir = Join-Path $targetScumOxygen 'oxygen\plugins'
 if (Test-Path $pluginSourceDir) {
-    if (Test-Path $targetPluginSourceDir) {
-        Remove-Item $targetPluginSourceDir -Recurse -Force
-    }
-    Copy-Item $pluginSourceDir $targetPluginSourceDir -Recurse -Force
+    New-Item -ItemType Directory -Path $targetPluginSourceDir -Force | Out-Null
+    Copy-Item (Join-Path $pluginSourceDir '*') $targetPluginSourceDir -Recurse -Force
 }
 
 $pluginsDir = Join-Path $targetScumOxygen 'Plugins'

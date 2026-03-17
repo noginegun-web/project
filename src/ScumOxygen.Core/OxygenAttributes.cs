@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Threading;
 using Oxygen.Csharp.API;
 
 namespace Oxygen.Csharp.Core;
@@ -55,6 +57,8 @@ public sealed class HookAttribute : Attribute
 
 public abstract class OxygenPlugin
 {
+    private static readonly ConcurrentDictionary<Guid, Timer> FallbackTimers = new();
+
     public virtual void OnLoad() { }
     public virtual void OnUnload() { }
     public virtual void OnPluginInit() { }
@@ -76,8 +80,36 @@ public abstract class OxygenPlugin
     protected T? LoadData<T>(string name) where T : new() => global::Oxygen.Csharp.API.Oxygen.Data<T>(name).Load();
     protected void SaveData<T>(string name, T obj) where T : new() => global::Oxygen.Csharp.API.Oxygen.Data<T>(name).Save(obj);
 
-    protected Guid Every(float seconds, Action action) => global::Oxygen.Csharp.API.Oxygen.Timers.Every(TimeSpan.FromSeconds(seconds), action);
-    protected void CancelTimer(Guid id) => global::Oxygen.Csharp.API.Oxygen.Timers.Cancel(id);
+    protected Guid Every(float seconds, Action action)
+    {
+        try
+        {
+            return global::Oxygen.Csharp.API.Oxygen.Timers.Every(TimeSpan.FromSeconds(seconds), action);
+        }
+        catch
+        {
+            var interval = TimeSpan.FromSeconds(seconds);
+            var id = Guid.NewGuid();
+            var timer = new Timer(_ => action(), null, interval, interval);
+            FallbackTimers[id] = timer;
+            return id;
+        }
+    }
+
+    protected void CancelTimer(Guid id)
+    {
+        try
+        {
+            if (global::Oxygen.Csharp.API.Oxygen.Timers.Cancel(id))
+                return;
+        }
+        catch
+        {
+        }
+
+        if (FallbackTimers.TryRemove(id, out var timer))
+            timer.Dispose();
+    }
 
     protected PlayerBase? FindPlayer(string nameOrId) => global::Oxygen.Csharp.API.Oxygen.FindPlayer(nameOrId);
     protected IReadOnlyList<PlayerBase> GetPlayers() => global::Oxygen.Csharp.API.Oxygen.ListPlayers();
