@@ -68,7 +68,21 @@ public static class Plugin
         catch
         {
         }
-        return 0;
+
+        try
+        {
+            string launchArgs = "scum-server";
+            if (args != IntPtr.Zero && size > 0)
+            {
+                launchArgs = Marshal.PtrToStringUTF8(args, size) ?? launchArgs;
+            }
+
+            return Initialize(launchArgs);
+        }
+        catch
+        {
+            return -1;
+        }
     }
 
     public static void InitializeManaged()

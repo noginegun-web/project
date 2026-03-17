@@ -6,13 +6,14 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$publishDir = Join-Path $repoRoot 'out\publish\ScumOxygen_win64'
+$runtimePublishDir = Join-Path $repoRoot 'out\publish\ScumOxygen_win64'
+$bootstrapPublishDir = Join-Path $repoRoot 'out\publish\ScumOxygen_Bootstrap_win64'
 $proxyDll = Join-Path $repoRoot 'src\ScumOxygen.ServerProxy\build_hosted\bin\Release\version.dll'
 $nativeCandidates = @(
     (Join-Path $repoRoot 'src\ScumOxygen.Native\build_codemod\Release\ScumOxygen.Native.dll'),
     (Join-Path $repoRoot 'src\ScumOxygen.Native\build\Release\ScumOxygen.Native.dll')
 )
-$runtimeConfigTemplate = Join-Path $repoRoot 'dist\server\ScumOxygen\ScumOxygen.Core.runtimeconfig.json'
+$bootstrapRuntimeConfig = Join-Path $bootstrapPublishDir 'ScumOxygen.Bootstrap.runtimeconfig.json'
 $sampleDir = Join-Path $repoRoot 'src\ScumOxygen.SamplePlugin\bin\Release\net8.0-windows'
 $webSourceDir = Join-Path $repoRoot 'src\ScumOxygen.Control\wwwroot'
 $pluginSourceDir = Join-Path $repoRoot 'dist\server\oxygen\plugins'
@@ -21,8 +22,12 @@ if (-not (Test-Path $TemplateDir)) {
     throw "TemplateDir not found: $TemplateDir"
 }
 
-if (-not (Test-Path $publishDir)) {
-    throw "Publish dir not found: $publishDir. Run dotnet publish first."
+if (-not (Test-Path $runtimePublishDir)) {
+    throw "Runtime publish dir not found: $runtimePublishDir. Run dotnet publish first."
+}
+
+if (-not (Test-Path $bootstrapPublishDir)) {
+    throw "Bootstrap publish dir not found: $bootstrapPublishDir. Run dotnet publish first."
 }
 
 if (-not (Test-Path $proxyDll)) {
@@ -34,9 +39,21 @@ if (-not $nativeDll) {
     throw "Native DLL not found. Build ScumOxygen.Native first."
 }
 
-$runtimeVersion = ((Get-Content $runtimeConfigTemplate -Raw | ConvertFrom-Json).runtimeOptions.framework.version)
-$hostFxrSource = Join-Path "C:\Program Files\dotnet\host\fxr\$runtimeVersion" 'hostfxr.dll'
-$runtimeSource = "C:\Program Files\dotnet\shared\Microsoft.NETCore.App\$runtimeVersion"
+$runtimeVersion = ((Get-Content $bootstrapRuntimeConfig -Raw | ConvertFrom-Json).runtimeOptions.framework.version)
+$hostFxrRoot = 'C:\Program Files\dotnet\host\fxr'
+$runtimeRoot = 'C:\Program Files\dotnet\shared\Microsoft.NETCore.App'
+
+$resolvedRuntimeVersion = $runtimeVersion
+if (-not (Test-Path (Join-Path $hostFxrRoot $resolvedRuntimeVersion))) {
+    $resolvedRuntimeVersion = Get-ChildItem $hostFxrRoot -Directory | Sort-Object Name | Select-Object -Last 1 -ExpandProperty Name
+}
+
+if (-not (Test-Path (Join-Path $runtimeRoot $resolvedRuntimeVersion))) {
+    $resolvedRuntimeVersion = Get-ChildItem $runtimeRoot -Directory | Sort-Object Name | Select-Object -Last 1 -ExpandProperty Name
+}
+
+$hostFxrSource = Join-Path (Join-Path $hostFxrRoot $resolvedRuntimeVersion) 'hostfxr.dll'
+$runtimeSource = Join-Path $runtimeRoot $resolvedRuntimeVersion
 
 if (-not (Test-Path $hostFxrSource)) {
     throw "hostfxr.dll not found: $hostFxrSource"
@@ -62,10 +79,21 @@ if (Test-Path $targetScumOxygen) {
 }
 New-Item -ItemType Directory -Path $targetScumOxygen | Out-Null
 
-Copy-Item (Join-Path $publishDir '*') $targetScumOxygen -Recurse -Force
+Copy-Item (Join-Path $bootstrapPublishDir '*') $targetScumOxygen -Recurse -Force
+Copy-Item (Join-Path $runtimePublishDir '*') $targetScumOxygen -Recurse -Force
+Remove-Item (Join-Path $targetScumOxygen 'ScumOxygen.Core.dll') -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $targetScumOxygen 'ScumOxygen.Core.pdb') -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $targetScumOxygen 'ScumOxygen.Core.deps.json') -Force -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.dll') (Join-Path $targetScumOxygen 'ScumOxygen.Runtime.dll') -Force
+Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.pdb') (Join-Path $targetScumOxygen 'ScumOxygen.Runtime.pdb') -Force -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.deps.json') (Join-Path $targetScumOxygen 'ScumOxygen.Runtime.deps.json') -Force -ErrorAction SilentlyContinue
 Copy-Item $nativeDll (Join-Path $targetScumOxygen 'ScumOxygen.Native.dll') -Force
-Copy-Item $runtimeConfigTemplate (Join-Path $targetScumOxygen 'ScumOxygen.Core.runtimeconfig.json') -Force
 Copy-Item (Join-Path $TemplateDir 'UPLOAD_TO_SERVER\ScumOxygen\oxygen') (Join-Path $targetScumOxygen 'oxygen') -Recurse -Force
+
+$runtimesDir = Join-Path $targetScumOxygen 'runtimes'
+if (Test-Path $runtimesDir) {
+    Get-ChildItem $runtimesDir -Directory | Where-Object { $_.Name -ne 'win-x64' } | Remove-Item -Recurse -Force
+}
 
 $oxygenRoot = Join-Path $targetScumOxygen 'oxygen'
 $cacheDir = Join-Path $oxygenRoot 'cache'
@@ -99,8 +127,8 @@ if (Test-Path $pluginSourceDir) {
 
 $pluginsDir = Join-Path $targetScumOxygen 'Plugins'
 New-Item -ItemType Directory -Path $pluginsDir | Out-Null
-Copy-Item (Join-Path $publishDir 'ScumOxygen.Core.dll') (Join-Path $pluginsDir 'ScumOxygen.Core.dll') -Force
-Copy-Item (Join-Path $publishDir 'ScumOxygen.Core.pdb') (Join-Path $pluginsDir 'ScumOxygen.Core.pdb') -Force
+Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.dll') (Join-Path $pluginsDir 'ScumOxygen.Core.dll') -Force
+Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.pdb') (Join-Path $pluginsDir 'ScumOxygen.Core.pdb') -Force -ErrorAction SilentlyContinue
 
 $sampleDll = Join-Path $sampleDir 'ScumOxygen.SamplePlugin.dll'
 $samplePdb = Join-Path $sampleDir 'ScumOxygen.SamplePlugin.pdb'
@@ -116,8 +144,8 @@ if (Test-Path $sampleDeps) {
 }
 
 $dotnetRoot = Join-Path $targetScumOxygen 'dotnet'
-$fxrTarget = Join-Path $dotnetRoot "host\fxr\$runtimeVersion"
-$runtimeTarget = Join-Path $dotnetRoot "shared\Microsoft.NETCore.App\$runtimeVersion"
+$fxrTarget = Join-Path $dotnetRoot "host\fxr\$resolvedRuntimeVersion"
+$runtimeTarget = Join-Path $dotnetRoot "shared\Microsoft.NETCore.App\$resolvedRuntimeVersion"
 New-Item -ItemType Directory -Path $fxrTarget -Force | Out-Null
 New-Item -ItemType Directory -Path $runtimeTarget -Force | Out-Null
 Copy-Item $hostFxrSource (Join-Path $fxrTarget 'hostfxr.dll') -Force

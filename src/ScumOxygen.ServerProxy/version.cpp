@@ -7,6 +7,8 @@
 #include <mutex>
 #include <fstream>
 #include <algorithm>
+#include <cstdio>
+#include <cstring>
 
 #include <coreclr_delegates.h>
 #include <hostfxr.h>
@@ -144,6 +146,22 @@ static std::wstring GetModuleDir(HMODULE mod)
 static hostfxr_initialize_for_runtime_config_fn init_fptr = nullptr;
 static hostfxr_get_runtime_delegate_fn get_delegate_fptr = nullptr;
 static hostfxr_close_fn close_fptr = nullptr;
+static hostfxr_set_error_writer_fn set_error_writer_fptr = nullptr;
+
+static std::string FormatRc(const int rc)
+{
+    char buffer[64] = {};
+    sprintf_s(buffer, " rc=%d (0x%08X)", rc, static_cast<unsigned int>(rc));
+    return std::string(buffer);
+}
+
+static void HOSTFXR_CALLTYPE HostfxrErrorWriter(const char_t* message)
+{
+    if (message == nullptr)
+        return;
+
+    LogLine(std::wstring(L"[hostfxr] ") + message);
+}
 
 static bool LoadHostfxr(const std::wstring& managedDir)
 {
@@ -183,6 +201,7 @@ static bool LoadHostfxr(const std::wstring& managedDir)
     init_fptr = (hostfxr_initialize_for_runtime_config_fn)GetProcAddress(hfxr, "hostfxr_initialize_for_runtime_config");
     get_delegate_fptr = (hostfxr_get_runtime_delegate_fn)GetProcAddress(hfxr, "hostfxr_get_runtime_delegate");
     close_fptr = (hostfxr_close_fn)GetProcAddress(hfxr, "hostfxr_close");
+    set_error_writer_fptr = (hostfxr_set_error_writer_fn)GetProcAddress(hfxr, "hostfxr_set_error_writer");
 
     if (!init_fptr || !get_delegate_fptr || !close_fptr)
     {
@@ -226,15 +245,24 @@ static void StartManaged(HMODULE mod)
         LoadNativeBridge(managedDir);
         if (!LoadHostfxr(managedDir)) return;
 
-        std::wstring runtimeConfig = managedDir + L"\\ScumOxygen.Core.runtimeconfig.json";
-        std::wstring assemblyPath = managedDir + L"\\ScumOxygen.Core.dll";
+        std::wstring runtimeConfig = managedDir + L"\\ScumOxygen.Bootstrap.runtimeconfig.json";
+        std::wstring assemblyPath = managedDir + L"\\ScumOxygen.Bootstrap.dll";
         LogLine(L"[proxy] runtimeconfig: " + runtimeConfig);
         LogLine(L"[proxy] assembly: " + assemblyPath);
+
+        if (set_error_writer_fptr)
+        {
+            set_error_writer_fptr(HostfxrErrorWriter);
+        }
 
         LogLineA("[proxy] hostfxr_initialize_for_runtime_config...");
         hostfxr_handle cxt = nullptr;
         int rc = init_fptr(runtimeConfig.c_str(), nullptr, &cxt);
-        if (rc != 0 || cxt == nullptr) { LogLineA(std::string("[proxy] hostfxr_initialize failed rc=") + std::to_string(rc)); return; }
+        if (rc != 0 || cxt == nullptr)
+        {
+            LogLineA(std::string("[proxy] hostfxr_initialize failed") + FormatRc(rc));
+            return;
+        }
 
         void* load_assembly_and_get_function_pointer = nullptr;
         rc = get_delegate_fptr(
@@ -244,16 +272,17 @@ static void StartManaged(HMODULE mod)
 
         if (rc != 0 || load_assembly_and_get_function_pointer == nullptr)
         {
-            LogLineA(std::string("[proxy] get_delegate failed rc=") + std::to_string(rc));
+            LogLineA(std::string("[proxy] get_delegate failed") + FormatRc(rc));
             close_fptr(cxt);
             return;
         }
 
         auto load_assembly = (load_assembly_and_get_function_pointer_fn)load_assembly_and_get_function_pointer;
 
-        const char_t* typeName = L"ScumOxygen.Core.Plugin, ScumOxygen.Core";
-        const char_t* methodName = L"InitializeManaged";
-        const char_t* delegateType = L"System.Action";
+        const char_t* typeName = L"ScumOxygen.Bootstrap.Plugin, ScumOxygen.Bootstrap";
+        const char_t* methodName = L"InitializeNative";
+        const char_t* delegateType = UNMANAGEDCALLERSONLY_METHOD;
+        const char* launchArgs = "scum-server";
 
         void* managedFunc = nullptr;
         LogLineA("[proxy] load_assembly_and_get_function_pointer...");
@@ -268,13 +297,13 @@ static void StartManaged(HMODULE mod)
         if (rc == 0 && managedFunc != nullptr)
         {
             LogLineA("[proxy] invoking managed entry...");
-            auto init = (void(STDMETHODCALLTYPE*)())(managedFunc);
-            init();
-            LogLineA("[proxy] managed entry returned");
+            auto init = (component_entry_point_fn)(managedFunc);
+            const int initRc = init((void*)launchArgs, static_cast<int32_t>(strlen(launchArgs)));
+            LogLineA(std::string("[proxy] managed entry returned") + FormatRc(initRc));
         }
         else
         {
-            LogLineA(std::string("[proxy] load_assembly_and_get_function_pointer failed rc=") + std::to_string(rc));
+            LogLineA(std::string("[proxy] load_assembly_and_get_function_pointer failed") + FormatRc(rc));
         }
 
         close_fptr(cxt);
