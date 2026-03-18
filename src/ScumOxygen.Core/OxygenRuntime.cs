@@ -101,8 +101,22 @@ public sealed class OxygenRuntime
 
         Oxygen.Csharp.API.Server.CommandImpl = _commandsSvc.Execute;
         Oxygen.Csharp.API.Server.CommandAsyncImpl = cmd => _commandsSvc.ExecuteAsync(cmd);
-        Oxygen.Csharp.API.Server.BroadcastImpl = msg => _commandsSvc.Execute($"broadcast {msg}");
-        Oxygen.Csharp.API.Server.AnnounceImpl = msg => _commandsSvc.Execute($"announce {msg}");
+        Oxygen.Csharp.API.Server.BroadcastImpl = msg =>
+        {
+            var result = _commandsSvc.Execute($"broadcast {msg}");
+            if (!result.Success)
+            {
+                _log.Warn($"[ServerAPI] Broadcast failed: {result.Error ?? "unknown error"} | msg={msg}");
+            }
+        };
+        Oxygen.Csharp.API.Server.AnnounceImpl = msg =>
+        {
+            var result = _commandsSvc.Execute($"announce {msg}");
+            if (!result.Success)
+            {
+                _log.Warn($"[ServerAPI] Announce failed: {result.Error ?? "unknown error"} | msg={msg}");
+            }
+        };
 
         _web.SetWebRoot(OxygenPaths.WebDir);
         _web.ConfigureSecurity(_runtimeConfig.ApiKey, _runtimeConfig.AllowedIps);
@@ -127,7 +141,7 @@ public sealed class OxygenRuntime
         _timers.Every(TimeSpan.FromSeconds(1), PollCommands);
         _nativeBridge = new NativeBridgeService(_log, _players, this);
         _nativeBridge.Start();
-        if (!_nativeBridge.WaitUntilConnected(TimeSpan.FromSeconds(5)))
+        if (!_nativeBridge.WaitUntilConnected(TimeSpan.FromSeconds(30)))
         {
             _log.Warn("[NativeBridge] Pipe not connected within startup window; continuing with deferred bridge.");
         }

@@ -1455,7 +1455,7 @@ struct HookEntry {
 static std::map<void*, HookEntry> s_Hooks;
 
 bool HookManager::Initialize() {
-    HookProcessEvent();
+    LogHookLine("ProcessEvent hook disabled in safe mode; using non-hook chat/event paths.");
     return true;
 }
 

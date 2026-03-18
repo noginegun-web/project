@@ -241,12 +241,14 @@ public sealed class PlayerBase
         var safe = Escape(message);
         if (DatabaseId > 0)
         {
-            ProcessCommand($"SendNotification 1 {DatabaseId} \"{safe}\"");
+            var response = Server.ProcessCommand($"SendNotification 1 {DatabaseId} \"{safe}\"");
+            if (response.Success)
+            {
+                return;
+            }
         }
-        else
-        {
-            Server.Broadcast($"[{Name}] {safe}");
-        }
+
+        Server.Broadcast($"[{Name}] {safe}");
     }
 
     public void ProcessCommand(string command)

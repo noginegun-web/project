@@ -16,6 +16,7 @@ public sealed class NativeBridgeService
     private readonly PlayerRegistry _players;
     private readonly OxygenRuntime _runtime;
     private readonly object _pipeLock = new();
+    private DateTimeOffset _lastPipeUnavailableLog = DateTimeOffset.MinValue;
     private CancellationTokenSource? _cts;
     private Task? _loopTask;
     private NamedPipeClientStream? _pipe;
@@ -151,7 +152,10 @@ public sealed class NativeBridgeService
             lock (_pipeLock)
             {
                 if (_pipe == null || !_pipe.IsConnected)
+                {
+                    LogPipeUnavailable(command, raw);
                     return false;
+                }
 
                 var payload = $"{(raw ? "RAW" : "CMD")}|{command}";
                 var bytes = Encoding.UTF8.GetBytes(payload);
@@ -165,6 +169,16 @@ public sealed class NativeBridgeService
             _log.Error($"[NativeBridge] Command send failed: {ex.GetBaseException().Message}");
             return false;
         }
+    }
+
+    private void LogPipeUnavailable(string command, bool raw)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now - _lastPipeUnavailableLog < TimeSpan.FromSeconds(10))
+            return;
+
+        _lastPipeUnavailableLog = now;
+        _log.Warn($"[NativeBridge] Pipe unavailable for {(raw ? "raw" : "command")} send: {command}");
     }
 
     private static async Task<string> ReadMessage(NamedPipeClientStream pipe, CancellationToken ct)
