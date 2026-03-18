@@ -28,15 +28,16 @@ Rule:
 ### 2026-03-18 - Server identity consistency
 
 What worked:
-- Standardizing one default identity across runtime and hosted package generation.
+- Replacing hardcoded identity with runtime auto-detection from real SCUM server settings.
 
 What did not work:
 - Leaving `server-1`, `scum-server-1`, and `SCUM Server` in different layers.
+- Hardcoding one specific hosted server name into shared source code.
 
 Rule:
-- Default project identity must stay aligned unless an environment explicitly overrides it:
-  - `ServerId = kolinsfer-main`
-  - `ServerName = KolinsFer`
+- Server identity must come from the real environment first:
+  - `ServerName` from `Saved/Config/WindowsServer/ServerSettings.ini`
+  - `ServerId` derived from the real name unless explicitly overridden
 
 ### 2026-03-18 - Public project presentation
 

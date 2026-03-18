@@ -10,6 +10,7 @@ using System.Threading;
 using Microsoft.Data.Sqlite;
 using Oxygen.Csharp.API;
 using Oxygen.Csharp.Core;
+using System.Text;
 
 namespace ScumOxygen.Core;
 
@@ -30,6 +31,8 @@ public sealed class OxygenRuntime
     private readonly ChatHistory _chat = new(400);
     private readonly KillHistory _kills = new(400);
     private NativeBridgeService? _nativeBridge;
+    private string? _resolvedServerName;
+    private string? _resolvedServerId;
     private readonly object _econLock = new();
     private DateTime _econLastRead = DateTime.MinValue;
     private Dictionary<string, EconomyEntry> _econBySteam = new(StringComparer.OrdinalIgnoreCase);
@@ -121,8 +124,25 @@ public sealed class OxygenRuntime
         _commandsSvc.SetNativeCommandSender(command => _nativeBridge?.TrySendServerCommand(command) == true);
         _eventPump = new ServerEventPump(_log, _timers, _commandsSvc, _players, this);
         _eventPump.Start();
+        ResolveServerIdentity();
         LoadAll();
         StartWatcher();
+    }
+
+    public object GetServerIdentity()
+    {
+        var (serverId, serverName, source) = ResolveServerIdentity();
+        return new
+        {
+            serverId,
+            serverName,
+            source
+        };
+    }
+
+    public (string ServerId, string ServerName, string Source) GetResolvedServerIdentity()
+    {
+        return ResolveServerIdentity();
     }
 
     public object ListPlugins()
@@ -290,8 +310,12 @@ public sealed class OxygenRuntime
 
     public object GetStatus()
     {
+        var (serverId, serverName, source) = ResolveServerIdentity();
         return new
         {
+            serverId,
+            serverName,
+            serverIdentitySource = source,
             rcon = _commandsSvc.Enabled,
             players = _players.List().Count,
             playerSource = _commandsSvc.Enabled ? "rcon" : "db"
@@ -485,6 +509,109 @@ ORDER BY s.id, sm.rank";
         }
 
         return Path.GetFullPath(candidates[0]);
+    }
+
+    private (string ServerId, string ServerName, string Source) ResolveServerIdentity()
+    {
+        if (!string.IsNullOrWhiteSpace(_resolvedServerId) && !string.IsNullOrWhiteSpace(_resolvedServerName))
+        {
+            return (_resolvedServerId!, _resolvedServerName!, "cached");
+        }
+
+        var configuredName = (_runtimeConfig.ServerName ?? string.Empty).Trim();
+        var configuredId = (_runtimeConfig.ServerId ?? string.Empty).Trim();
+
+        if (!string.IsNullOrWhiteSpace(configuredName))
+        {
+            _resolvedServerName = configuredName;
+            _resolvedServerId = !string.IsNullOrWhiteSpace(configuredId) ? configuredId : SlugifyServerId(configuredName);
+            return (_resolvedServerId, _resolvedServerName, "runtime-config");
+        }
+
+        var iniPath = ResolveServerSettingsPath();
+        if (!string.IsNullOrWhiteSpace(iniPath) && File.Exists(iniPath))
+        {
+            var detectedName = ReadIniValue(iniPath, "scum.ServerName");
+            if (!string.IsNullOrWhiteSpace(detectedName))
+            {
+                _resolvedServerName = detectedName.Trim();
+                _resolvedServerId = !string.IsNullOrWhiteSpace(configuredId) ? configuredId : SlugifyServerId(_resolvedServerName);
+                return (_resolvedServerId, _resolvedServerName, "server-settings");
+            }
+        }
+
+        _resolvedServerName = "SCUM Server";
+        _resolvedServerId = !string.IsNullOrWhiteSpace(configuredId) ? configuredId : "scum-server";
+        return (_resolvedServerId, _resolvedServerName, "fallback");
+    }
+
+    private string ResolveServerSettingsPath()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(OxygenPaths.BaseDir, "..", "..", "..", "Saved", "Config", "WindowsServer", "ServerSettings.ini"),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "Saved", "Config", "WindowsServer", "ServerSettings.ini"),
+            Path.Combine(OxygenPaths.BaseDir, "..", "..", "Saved", "Config", "WindowsServer", "ServerSettings.ini"),
+            Path.Combine(OxygenPaths.BaseDir, "..", "..", "..", "Saved", "Config", "WindowsNoEditor", "ServerSettings.ini")
+        };
+
+        foreach (var candidate in candidates)
+        {
+            var full = Path.GetFullPath(candidate);
+            if (File.Exists(full))
+                return full;
+        }
+
+        return Path.GetFullPath(candidates[0]);
+    }
+
+    private static string? ReadIniValue(string path, string key)
+    {
+        foreach (var line in File.ReadLines(path))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0 || trimmed.StartsWith(';') || trimmed.StartsWith('#') || trimmed.StartsWith('['))
+                continue;
+
+            var separatorIndex = trimmed.IndexOf('=');
+            if (separatorIndex <= 0)
+                continue;
+
+            var currentKey = trimmed[..separatorIndex].Trim();
+            if (!currentKey.Equals(key, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            return trimmed[(separatorIndex + 1)..].Trim();
+        }
+
+        return null;
+    }
+
+    private static string SlugifyServerId(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "scum-server";
+
+        var sb = new StringBuilder();
+        var lastWasDash = false;
+        foreach (var ch in value.Trim().ToLowerInvariant())
+        {
+            if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'))
+            {
+                sb.Append(ch);
+                lastWasDash = false;
+                continue;
+            }
+
+            if (lastWasDash)
+                continue;
+
+            sb.Append('-');
+            lastWasDash = true;
+        }
+
+        var slug = sb.ToString().Trim('-');
+        return string.IsNullOrWhiteSpace(slug) ? "scum-server" : slug;
     }
 
     internal List<PlayerSnapshot> ReadPlayerSnapshotFromDb()

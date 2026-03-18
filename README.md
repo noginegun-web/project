@@ -67,10 +67,10 @@ The build script prepares a package for:
 - `SCUM/Binaries/Win64/version.dll`
 - `SCUM/Binaries/Win64/ScumOxygen/...`
 
-Default hosted runtime values:
+Default hosted runtime behavior:
 
-- `ServerId = kolinsfer-main`
-- `ServerName = KolinsFer`
+- `ServerName` is auto-detected from SCUM `ServerSettings.ini`
+- `ServerId` is auto-generated from the real server name unless explicitly configured
 - `Web = http://+:8090/`
 
 ## Research policy for this repo

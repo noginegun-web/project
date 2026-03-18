@@ -39,12 +39,13 @@ public sealed class ApiController
     private string GetServers()
     {
         var token = _runtime.Config.ApiKey;
+        var identity = _runtime.GetResolvedServerIdentity();
         var servers = new[]
         {
             new
             {
-                id = _runtime.Config.ServerId,
-                name = _runtime.Config.ServerName,
+                id = identity.ServerId,
+                name = identity.ServerName,
                 version = _runtime.Version,
                 token
             }

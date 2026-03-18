@@ -252,3 +252,27 @@
 
 **Operational lesson:**
 - OpenClaw channel support may exist in the installation but still be invisible until the corresponding plugin is both enabled and explicitly allowlisted.
+
+
+## 2026-03-18 14:05:00 - Server identity autodetection
+**Success:**
+- Removed the wrong hardcoded hosted server identity from runtime defaults and hosted package generation.
+- Added runtime server identity resolution from real SCUM config:
+  - `Saved/Config/WindowsServer/ServerSettings.ini`
+  - fallback to configured values only when explicitly set
+- Added automatic `ServerId` slug generation from the detected real server name.
+- Extended runtime status payload with:
+  - `serverId`
+  - `serverName`
+  - `serverIdentitySource`
+- Core build verified after the change.
+
+**Why this matters:**
+- The web panel should reflect the actual hosted SCUM server, not a name accidentally baked into a previous local test package.
+
+**Files changed:**
+- `src/ScumOxygen.Core/RuntimeConfig.cs`
+- `src/ScumOxygen.Core/ControlClient.cs`
+- `src/ScumOxygen.Core/OxygenRuntime.cs`
+- `src/ScumOxygen.Core/ApiController.cs`
+- `scripts/Build-HostedPackage.ps1`

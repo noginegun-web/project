@@ -11,8 +11,8 @@ public sealed class RuntimeConfig
     public string ApiKey { get; set; } = "";
     public string[] AllowedIps { get; set; } = Array.Empty<string>();
     public bool EnableCors { get; set; } = true;
-    public string ServerId { get; set; } = "kolinsfer-main";
-    public string ServerName { get; set; } = "KolinsFer";
+    public string ServerId { get; set; } = "";
+    public string ServerName { get; set; } = "";
     public string DatabasePath { get; set; } = "";
     public string MapImageUrl { get; set; } = "https://scum-map.com/images/interactive_map/scum/island.jpg";
     public string MapSourceUrl { get; set; } = "https://scum-map.com/en/map/";
