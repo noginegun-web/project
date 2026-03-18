@@ -1,195 +1,107 @@
 # ScumOxygen
 
-Клон плагина **Oxygen** для SCUM Dedicated Server v1.2.1.1 (февраль 2026).
+`ScumOxygen` is a SCUM dedicated-server plugin framework inspired by Oxygen/OxyMod and built around a native in-process bridge plus a local web panel.
 
-## ⚠️ Важно: Статус проекта
+Public repository:
+- [https://github.com/noginegun-web/project](https://github.com/noginegun-web/project)
 
-**Рабочая основа** — C# компоненты готовы, C++ DLL требует финальной настройки смещений под твою конкретную версию.
+## Current direction
 
-## 📋 Что есть на компьютере
+The project is no longer being treated as a simple log parser or DB wrapper.
+The target architecture is now:
 
-- ✅ **SCUM клиент**: `E:\SteamLibrary\steamapps\common\SCUM`
-- ✅ **UE4SS установлен**: `E:\SteamLibrary\steamapps\common\SCUM\SCUM\Binaries\Win64\`
-- ✅ **Дампы классов**: `CXXHeaderDump/`, `UHTHeaderDump/`
-- ✅ **Mappings**: `Mappings.usmap` для FModel
-- ✅ **Версия игры**: 1.2.1.1.106289 (февраль 2026)
+1. Native in-process hooks
+2. Managed runtime and plugin host
+3. Hot-reloadable `.cs` plugins
+4. Web panel for live control, map, players, chat, and plugin editing
 
-## 🔧 Файлы для сервера
+That is the only path that can realistically reach Oxygen-level behavior.
 
-После сборки (`dotnet build -c Release` и CMake для C++):
+## What already works
 
-### Обязательные:
-```
-ScumOxygen/
-├── ScumOxygen.Cli.exe              # Главный исполняемый файл
-├── ScumOxygen.Core.dll
-├── ScumOxygen.Rcon.dll             # RCON клиент
-├── ScumOxygen.Scripting.dll        # Компилятор скриптов
-├── ScumOxygen.Native.dll           # Нативная DLL для инжекции ⚠️ ТРЕБУЕТ СБОРКИ
-├── ScumOxygen.Injector.exe         # Инжектор
-├── appsettings.json                # Конфиг (создать)
-└── Scripts/                        # Папка со скриптами
-```
+- Drop-in hosted package for FTP-only SCUM hosting
+- `version.dll` bootstrap loading inside `SCUM/Binaries/Win64`
+- Embedded local web API and panel
+- Hot-save / reload flow for `.cs` plugin files
+- Telegram-connected OpenClaw workspace for project continuity
+- Oxygen-style permission groundwork:
+  - `oxygen.users.json`
+  - `oxygen.groups.json`
+  - wildcard permissions
+  - group inheritance
+- Compatibility surface for multiple public Oxygen plugin patterns
 
-### Конфиг `appsettings.json`:
-```json
-{
-  "Rcon": {
-    "Host": "127.0.0.1",
-    "Port": 8881,
-    "Password": "твой_пароль_из_Steam"
-  },
-  "Scripting": {
-    "ScriptsDirectory": "./Scripts",
-    "AutoReload": true,
-    "TimeoutSeconds": 30
-  }
-}
-```
+## What is still incomplete
 
-## 🚀 Запуск
+The project is not yet at full Oxygen parity.
 
-### 1. Подготовка сервера
-```bash
-# В Steam Launch Options для SCUM Dedicated Server:
--fileopenlog
-```
+The biggest remaining gaps are:
 
-### 2. Инжекция DLL (после запуска сервера)
-```bash
-ScumOxygen.Injector.exe SCUMServer.exe ScumOxygen.Native.dll
-```
+- generic `ProcessEvent` detour
+- real native gameplay event dispatch
+- true live equipment and inventory extraction
+- actor-backed world map layers
+- richer plugin-facing web API/hooks
 
-### 3. Запуск менеджера
-```bash
-ScumOxygen.Cli.exe
-# или с параметрами:
-ScumOxygen.Cli.exe 127.0.0.1 8881 admin
-```
+Until those are complete, any DB/log-based feature should be treated as fallback only.
 
-## 🔨 Сборка C++ DLL (Visual Studio 2022)
+## Architecture
 
-```bash
-cd C:\temp\ScumOxygen\src\ScumOxygen.Native
-mkdir build && cd build
-cmake .. -A x64 -DCMAKE_BUILD_TYPE=Release
-cmake --build . --config Release
+Main components:
 
-# Результат:
-# - build/Release/ScumOxygen.Native.dll
-# - build/Release/ScumOxygen.Injector.exe
-```
+- `src/ScumOxygen.ServerProxy`
+  - hosted bootstrap loader via `version.dll`
+- `src/ScumOxygen.Native`
+  - native bridge, memory access, hook plumbing
+- `src/ScumOxygen.Core`
+  - runtime, plugin host, permissions, web API, snapshots
+- `src/ScumOxygen.Control`
+  - panel assets (`wwwroot`)
+- `scripts/Build-HostedPackage.ps1`
+  - assembles the hosted drop-in package
 
-## ⚠️ Настройка смещений (КРИТИЧНО)
+## Hosted package
 
-Данные из UE4SS дампов SCUM v1.2.1.1:
+The build script prepares a package for:
 
-### Классы и размеры:
-| Класс | Размер | Базовый класс |
-|-------|--------|---------------|
-| `APrisoner` | 0x2F28 (~12KB) | `ACharacter` |
-| `AConZGameState` | 0x8D0 | `AGameState` |
-| `AConZPlayerController` | 0x9F8 | `APlayerController` |
+- `SCUM/Binaries/Win64/version.dll`
+- `SCUM/Binaries/Win64/ScumOxygen/...`
 
-### Ключевые смещения (нужно подтвердить через Cheat Engine):
-- `AController::PlayerState` — ~0x2E0
-- `APlayerState::PlayerNamePrivate` — ~0x308
-- `APlayerState::PlayerId` — ~0x318
-- `AConZGameState::PlayerArray` — ~0x318 (TArray<APlayerState*>)
+Default hosted runtime values:
 
-### Найти GWorld:
-1. Запусти SCUM (клиент) с `-fileopenlog`
-2. Инжектируй UE4SS (уже установлен)
-3. Открой консоль UE4SS (~ или F10)
-4. Введи: `obj dump`
-5. Найди `GWorld` в выводе
+- `ServerId = kolinsfer-main`
+- `ServerName = KolinsFer`
+- `Web = http://+:8090/`
 
-## 📚 Структура проекта
+## Research policy for this repo
 
-```
-C:\temp\ScumOxygen
-├── src/
-│   ├── ScumOxygen.Core/           # Модели (PlayerInfo, ServerStatus)
-│   ├── ScumOxygen.Rcon/           # RCON с System.IO.Pipelines
-│   │   ├── Protocol/              # RCON пакеты
-│   │   ├── Parsers/               # listplayers, status
-│   │   └── Pool/                  # Пул соединений
-│   ├── ScumOxygen.Scripting/      # Roslyn + AssemblyLoadContext
-│   │   ├── ScriptCompiler.cs
-│   │   ├── ScriptEngine.cs
-│   │   └── ScriptLoadContext.cs
-│   ├── ScumOxygen.Cli/            # Консольное приложение
-│   ├── ScumOxygen.Tests/          # xUnit тесты
-│   └── ScumOxygen.Native/         # C++ DLL
-│       ├── include/
-│       │   ├── sdk.h              # Базовый SDK
-│       │   └── scum_sdk.h         # SCUM специфичные структуры
-│       ├── src/
-│       │   ├── dllmain.cpp        # Точка входа DLL
-│       │   ├── hooks.cpp          # Хуки игровых событий
-│       │   ├── memory.cpp         # Чтение памяти
-│       │   ├── bridge.cpp         # IPC через Named Pipe
-│       │   └── ue4_sdk.cpp        # (устарел, использовать scum_sdk.h)
-│       ├── injector.cpp           # Инжектор
-│       └── CMakeLists.txt
-└── ScumOxygen.sln
-```
+We are explicitly tracking:
 
-## 🎮 API для скриптов
+- what worked
+- what failed
+- why it failed
+- what should not be repeated
 
-Пример скрипта `Scripts/welcome.csx`:
-```csharp
-using System;
-using ScumOxygen.Core.Interfaces;
+Current research files:
 
-public class WelcomeScript
-{
-    public void OnPlayerConnected(IPlayer player)
-    {
-        Console.WriteLine($"Welcome {player.CharacterName}!");
-    }
-    
-    public async Task Execute(IServer server)
-    {
-        await server.AnnounceAsync("Server managed by ScumOxygen!");
-    }
-}
-```
+- [reports/research_log.md](reports/research_log.md)
+- [reports/oxygen_parity_gap_2026-03-18.md](reports/oxygen_parity_gap_2026-03-18.md)
+- [docs/engineering_journal.md](docs/engineering_journal.md)
 
-## 🔍 Отладка
+## Next engineering milestone
 
-### Логи консоли (DLL):
-```
-[ScumOxygen] DLL attached
-[ScumOxygen] MemoryReader initialized for PID: 12345
-[ScumOxygen] Found PostLogin at: 0x7FF... (если паттерн найден)
-```
+The next real milestone is not cosmetic UI work.
+It is:
 
-### Если паттерны не найдены:
-1. Запусти сервер с `-fileopenlog`
-2. Подключись через x64dbg или Cheat Engine
-3. Найди сигнатуры функций `PostLogin`, `Logout`
-4. Обнови паттерны в `hooks.cpp`
+1. finish `ProcessEvent` detour
+2. map native events to managed hooks
+3. replace synthetic inventory/map sources with actor-backed live data
+4. bring web features on top of those native snapshots
 
-## ⚖️ Легальность
+## Notes
 
-- ✅ Личный сервер с `-fileopenlog` (EAC отключен)
-- ✅ Некоммерческое использование
-- ❌ Публичные сервера с включенным EAC
+If you are browsing this repository as an external reviewer:
 
-## 📝 TODO для финализации
-
-1. [ ] Собрать C++ DLL через CMake
-2. [ ] Найти актуальные смещения GWorld через CE
-3. [ ] Подтвердить паттерны функций (PostLogin, Logout)
-4. [ ] Протестировать инжекцию
-5. [ ] Настроить веб-панель (Blazor) — опционально
-
-## 💾 Бэкапы
-
-Проект находится в: `C:\temp\ScumOxygen`
-
-Скопируй всю папку перед экспериментами с C++ кодом.
-
----
-**Готов помочь** с настройкой смещений через Cheat Engine если запустишь сервер и дампнешь память.
+- the current codebase is a live research project
+- parity with Oxygen is the goal, not the current state
+- the most important unfinished work is in the native hook pipeline

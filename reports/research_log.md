@@ -231,3 +231,24 @@
 - `src/ScumOxygen.Core/OxygenAttributes.cs`
 - `src/ScumOxygen.Core/OxygenRuntime.cs`
 - `reports/oxygen_parity_gap_2026-03-18.md`
+
+
+## 2026-03-18 13:40:00 - OpenClaw Telegram and project hygiene
+**Success:**
+- Enabled the built-in OpenClaw Telegram plugin and added the bot as a real channel account.
+- Approved the owner's Telegram sender ID through OpenClaw pairing.
+- Verified Telegram channel status: running, polling, works.
+- Sent messages through OpenClaw itself instead of one-off Bot API calls.
+- Made the GitHub repository public so the project can be reviewed by link.
+- Standardized default project/server identity for runtime and hosted package generation:
+  - `ServerId = kolinsfer-main`
+  - `ServerName = KolinsFer`
+- Replaced outdated public README with a current architecture/status document.
+- Added `docs/engineering_journal.md` to preserve proven rules and avoid repeating mistakes.
+
+**Failed/Blocked:**
+- `gh` CLI was not authenticated, so repository visibility had to be changed via Git credential manager backed API access instead.
+- Telegram allowlist persistence in OpenClaw config behaved differently than expected; pairing approval works and channel is operational, but config semantics need a deeper pass later if we want strict allowlist-only DM policy.
+
+**Operational lesson:**
+- OpenClaw channel support may exist in the installation but still be invisible until the corresponding plugin is both enabled and explicitly allowlisted.

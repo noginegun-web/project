@@ -132,7 +132,7 @@ public sealed class ControlConfig
 {
     public bool Enabled { get; set; } = false;
     public string WsUrl { get; set; } = "";
-    public string ServerId { get; set; } = "server-1";
+    public string ServerId { get; set; } = "kolinsfer-main";
     public string Token { get; set; } = "";
 
     public static ControlConfig Load(string path)
