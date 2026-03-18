@@ -21,7 +21,9 @@ public sealed class WebApiRequest
 
 public sealed class WebApiService
 {
-    private readonly ConcurrentDictionary<string, Func<WebApiRequest, string>> _routes = new(StringComparer.OrdinalIgnoreCase);
+    private sealed record RouteEntry(Func<WebApiRequest, string> Handler, bool RequireAuth);
+
+    private readonly ConcurrentDictionary<string, RouteEntry> _routes = new(StringComparer.OrdinalIgnoreCase);
     private TcpListener? _listener;
     private Thread? _thread;
     private string _webRoot = string.Empty;
@@ -29,17 +31,25 @@ public sealed class WebApiService
     private HashSet<string> _allowedIps = new(StringComparer.OrdinalIgnoreCase);
     private bool _enableCors = true;
     private volatile bool _running;
+    private int _listenPort;
 
     public void Start(string prefix)
     {
-        if (_running) return;
-
         var normalizedPrefix = prefix
             .Replace("http://+:", "http://0.0.0.0:", StringComparison.OrdinalIgnoreCase)
             .Replace("http://*:", "http://0.0.0.0:", StringComparison.OrdinalIgnoreCase);
         var uri = new Uri(normalizedPrefix);
         var host = uri.Host;
         var port = uri.Port;
+
+        if (_running)
+        {
+            if (_listenPort == port)
+                return;
+
+            throw new InvalidOperationException($"Web API already running on port {_listenPort}, cannot switch to {port} without restart.");
+        }
+
         IPAddress bindAddress;
         if (string.Equals(host, "+", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(host, "*", StringComparison.OrdinalIgnoreCase) ||
@@ -58,9 +68,22 @@ public sealed class WebApiService
 
         _listener = new TcpListener(bindAddress, port);
         _listener.Start();
+        _listenPort = port;
         _running = true;
         _thread = new Thread(ListenLoop) { IsBackground = true };
         _thread.Start();
+    }
+
+    public void StartPluginServer(int port, string token)
+    {
+        if (port <= 0)
+            throw new ArgumentOutOfRangeException(nameof(port));
+
+        Start($"http://+:{port}/");
+        if (string.IsNullOrWhiteSpace(_apiKey) && !string.IsNullOrWhiteSpace(token))
+        {
+            ConfigureSecurity(token, _allowedIps);
+        }
     }
 
     public void SetWebRoot(string path)
@@ -83,12 +106,24 @@ public sealed class WebApiService
     {
         _running = false;
         try { _listener?.Stop(); } catch { }
+        _listenPort = 0;
     }
 
     public void Register(string method, string path, Func<WebApiRequest, string> handler)
     {
+        Register(method, path, handler, requireAuth: false);
+    }
+
+    public void Register(string method, string path, Func<WebApiRequest, string> handler, bool requireAuth)
+    {
         var key = $"{method.ToUpperInvariant()} {path}";
-        _routes[key] = handler;
+        _routes[key] = new RouteEntry(handler, requireAuth);
+    }
+
+    public void Unregister(string method, string path)
+    {
+        var key = $"{method.ToUpperInvariant()} {path}";
+        _routes.TryRemove(key, out _);
     }
 
     private void ListenLoop()
@@ -123,18 +158,24 @@ public sealed class WebApiService
                     return;
                 }
 
-                var isApi = req.Path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
-                if (isApi && !IsAuthorized(req))
+                var routeKey = $"{req.Method.ToUpperInvariant()} {req.Path}";
+                if (_routes.TryGetValue(routeKey, out var route))
                 {
-                    WriteResponse(stream, 401, "application/json; charset=utf-8", Encoding.UTF8.GetBytes("{\"ok\":false,\"error\":\"unauthorized\"}"));
+                    var isApi = req.Path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
+                    if ((isApi || route.RequireAuth) && !IsAuthorized(req))
+                    {
+                        WriteResponse(stream, 401, "application/json; charset=utf-8", Encoding.UTF8.GetBytes("{\"ok\":false,\"error\":\"unauthorized\"}"));
+                        return;
+                    }
+
+                    var body = route.Handler(req) ?? "{}";
+                    WriteResponse(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(body));
                     return;
                 }
 
-                var routeKey = $"{req.Method.ToUpperInvariant()} {req.Path}";
-                if (_routes.TryGetValue(routeKey, out var handler))
+                if (req.Path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase) && !IsAuthorized(req))
                 {
-                    var body = handler(req) ?? "{}";
-                    WriteResponse(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(body));
+                    WriteResponse(stream, 401, "application/json; charset=utf-8", Encoding.UTF8.GetBytes("{\"ok\":false,\"error\":\"unauthorized\"}"));
                     return;
                 }
 

@@ -102,21 +102,75 @@ void Bridge::SendEvent(const char* eventType, const char* data) {
     WriteFile(s_Pipe, message.c_str(), (DWORD)message.length(), &bytesWritten, nullptr);
 }
 
-void Bridge::SendPlayerJoin(const char* steamId, const char* playerName) {
-    char buffer[1024];
-    snprintf(buffer, sizeof(buffer), "{\"steamId\":\"%s\",\"name\":\"%s\"}", steamId, playerName);
+static std::string EscapeJson(const char* value) {
+    std::string out;
+    const std::string input = value ? value : "";
+    out.reserve(input.size() + 16);
+
+    for (const char ch : input) {
+        switch (ch) {
+        case '\\': out += "\\\\"; break;
+        case '"': out += "\\\""; break;
+        case '\r': out += "\\r"; break;
+        case '\n': out += "\\n"; break;
+        case '\t': out += "\\t"; break;
+        default:
+            if (static_cast<unsigned char>(ch) < 0x20) {
+                char tmp[7];
+                snprintf(tmp, sizeof(tmp), "\\u%04x", static_cast<unsigned char>(ch));
+                out += tmp;
+            } else {
+                out += ch;
+            }
+            break;
+        }
+    }
+
+    return out;
+}
+
+void Bridge::SendPlayerJoin(int playerId, const char* playerName, const char* steamId) {
+    const auto safeName = EscapeJson(playerName);
+    const auto safeSteamId = EscapeJson(steamId);
+    char buffer[1400];
+    snprintf(
+        buffer,
+        sizeof(buffer),
+        "{\"playerId\":%d,\"name\":\"%s\",\"steamId\":\"%s\"}",
+        playerId,
+        safeName.c_str(),
+        safeSteamId.c_str());
     SendEvent("PLAYER_JOIN", buffer);
 }
 
-void Bridge::SendPlayerLeave(const char* steamId) {
-    char buffer[256];
-    snprintf(buffer, sizeof(buffer), "{\"steamId\":\"%s\"}", steamId);
+void Bridge::SendPlayerLeave(int playerId, const char* playerName, const char* steamId) {
+    const auto safeName = EscapeJson(playerName);
+    const auto safeSteamId = EscapeJson(steamId);
+    char buffer[1400];
+    snprintf(
+        buffer,
+        sizeof(buffer),
+        "{\"playerId\":%d,\"name\":\"%s\",\"steamId\":\"%s\"}",
+        playerId,
+        safeName.c_str(),
+        safeSteamId.c_str());
     SendEvent("PLAYER_LEAVE", buffer);
 }
 
-void Bridge::SendChatMessage(const char* steamId, const char* message) {
-    char buffer[2048];
-    snprintf(buffer, sizeof(buffer), "{\"steamId\":\"%s\",\"message\":\"%s\"}", steamId, message);
+void Bridge::SendChatMessage(int playerId, const char* playerName, const char* message, int chatType, const char* steamId) {
+    const auto safeName = EscapeJson(playerName);
+    const auto safeMessage = EscapeJson(message);
+    const auto safeSteamId = EscapeJson(steamId);
+    char buffer[3072];
+    snprintf(
+        buffer,
+        sizeof(buffer),
+        "{\"playerId\":%d,\"name\":\"%s\",\"steamId\":\"%s\",\"message\":\"%s\",\"chatType\":%d}",
+        playerId,
+        safeName.c_str(),
+        safeSteamId.c_str(),
+        safeMessage.c_str(),
+        chatType);
     SendEvent("CHAT_MESSAGE", buffer);
 }
 

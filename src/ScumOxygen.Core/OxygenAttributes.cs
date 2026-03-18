@@ -133,6 +133,11 @@ public abstract class OxygenPlugin
             timer.Dispose();
     }
 
+    protected void StartWebServer(int port, string token)
+    {
+        global::Oxygen.Csharp.API.Oxygen.Web.StartPluginServer(port, token);
+    }
+
     protected PlayerBase? FindPlayer(string nameOrId) => global::Oxygen.Csharp.API.Oxygen.FindPlayer(nameOrId);
     protected IReadOnlyList<PlayerBase> GetPlayers() => global::Oxygen.Csharp.API.Oxygen.ListPlayers();
 

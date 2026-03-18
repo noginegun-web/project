@@ -77,9 +77,14 @@ public sealed class PlayerRegistry
         return p;
     }
 
-    public PlayerBase UpsertFromNative(string name, Vector3 location)
+    public PlayerBase UpsertFromNative(string name, Vector3 location, string steamId = "")
     {
         PlayerBase? player = null;
+
+        if (!string.IsNullOrWhiteSpace(steamId) && _bySteam.TryGetValue(steamId, out var bySteam))
+        {
+            player = bySteam;
+        }
 
         if (!string.IsNullOrWhiteSpace(name) && _byName.TryGetValue(name, out var byName))
         {
@@ -88,15 +93,24 @@ public sealed class PlayerRegistry
 
         if (player == null)
         {
-            var key = !string.IsNullOrWhiteSpace(name) ? $"name:{name}" : $"native:{Guid.NewGuid():N}";
+            var key = !string.IsNullOrWhiteSpace(steamId)
+                ? steamId
+                : (!string.IsNullOrWhiteSpace(name) ? $"name:{name}" : $"native:{Guid.NewGuid():N}");
             if (!_bySteam.TryGetValue(key, out player))
             {
                 player = new PlayerBase
                 {
+                    SteamId = steamId,
                     Name = name
                 };
                 _bySteam[key] = player;
             }
+        }
+
+        if (!string.IsNullOrWhiteSpace(steamId))
+        {
+            player.SteamId = steamId;
+            _bySteam[steamId] = player;
         }
 
         if (!string.IsNullOrWhiteSpace(name))

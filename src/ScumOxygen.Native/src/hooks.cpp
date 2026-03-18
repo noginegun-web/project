@@ -114,7 +114,7 @@ void __fastcall hk_PostLogin(void* gameMode, void* playerController) {
             printf("[ScumOxygen] Player joined: %s (ID: %d)\n", name.c_str(), state->PlayerId);
             
             // Отправляем в .NET bridge
-            Bridge::SendPlayerJoin(std::to_string(state->PlayerId).c_str(), name.c_str());
+            Bridge::SendPlayerJoin(state->PlayerId, name.c_str());
         }
     }
     
@@ -129,7 +129,7 @@ void __fastcall hk_Logout(void* gameMode, void* playerController) {
         if (ppState && *ppState) {
             APlayerState* state = *ppState;
             printf("[ScumOxygen] Player left: %s\n", state->PlayerNamePrivate.ToString().c_str());
-            Bridge::SendPlayerLeave(std::to_string(state->PlayerId).c_str());
+            Bridge::SendPlayerLeave(state->PlayerId, state->PlayerNamePrivate.ToString().c_str());
         }
     }
     
@@ -147,7 +147,7 @@ void __fastcall hk_BroadcastChat(void* gameState, void* playerState, void* messa
         std::string player = state->PlayerNamePrivate.ToString();
         
         printf("[ScumOxygen] Chat [%s]: %s\n", player.c_str(), text.c_str());
-        Bridge::SendChatMessage(std::to_string(state->PlayerId).c_str(), text.c_str());
+        Bridge::SendChatMessage(state->PlayerId, player.c_str(), text.c_str(), chatType);
     }
     
     if (o_BroadcastChat) {

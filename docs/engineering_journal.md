@@ -87,3 +87,27 @@ Rule:
   - plugin dispatch happened
   - final SCUM command text is correct and visible in diagnostics/native logs
 - When updating hosted runtime binaries, stop the server first, upload, then start it again.
+
+### 2026-03-18 - Native bridge schema and plugin web routes
+
+What worked:
+- The native bridge was aligned to the managed DTO contract:
+  - `PLAYER_JOIN`, `PLAYER_LEAVE`, `PLAYER_SNAPSHOT`, `CHAT_MESSAGE` now use `playerId`, `name`, `steamId`, `message`, `chatType`.
+- Native polling now reads `APrisoner._userId` from the live process, so native player snapshots can carry Steam IDs instead of only names.
+- Added plugin-facing web support closer to Oxygen docs:
+  - `StartWebServer(int port, string token)` on `OxygenPlugin`
+  - `[WebRoute(path, method, requireAuth)]`
+  - runtime registration/unregistration on plugin load/unload
+- Verified on the local dedicated server:
+  - `GET /relay/ping` from `SamplePlugin` returns JSON from a live plugin route
+  - `POST /api/plugin-command` can execute `/hello`, `/travel`, `/sethome base`, `/homes` without entering the game
+
+What did not work:
+- Building the hosted package in parallel with `dotnet publish` produced a stale `ScumOxygen.Runtime.dll`.
+- The first local validation accidentally used an outdated packaged runtime, which made it look like `WebRoute` and `StartWebServer` did not exist.
+- Trying to append to active SCUM chat logs directly failed because the server keeps those files locked exclusively.
+
+Rule:
+- Never run `Build-HostedPackage.ps1` in parallel with publish steps; package only after publish finishes.
+- When validating new runtime API surface, verify the deployed `ScumOxygen.Runtime.dll` hash matches the published `ScumOxygen.Core.dll`.
+- For no-human plugin tests, prefer synthetic server-side execution paths such as `/api/plugin-command` over trying to mutate locked SCUM log files.

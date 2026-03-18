@@ -19,6 +19,7 @@ public sealed class ApiController
         _runtime.Web.Register("GET", "/api/servers", _ => GetServers());
         _runtime.Web.Register("GET", "/api/players", _ => GetPlayers());
         _runtime.Web.Register("POST", "/api/command", ExecuteCommand);
+        _runtime.Web.Register("POST", "/api/plugin-command", ExecutePluginCommand);
         _runtime.Web.Register("POST", "/api/broadcast", Broadcast);
         _runtime.Web.Register("GET", "/api/chat", _ => GetChat());
         _runtime.Web.Register("POST", "/api/chat", SendChat);
@@ -79,6 +80,15 @@ public sealed class ApiController
         var data = ReadJsonBody(req);
         var message = data.TryGetValue("message", out var msg) ? msg : string.Empty;
         var res = _runtime.BroadcastMessage(message);
+        return JsonSerializer.Serialize(res);
+    }
+
+    private string ExecutePluginCommand(WebApiRequest req)
+    {
+        var data = ReadJsonBody(req);
+        var player = data.TryGetValue("player", out var playerQuery) ? playerQuery : string.Empty;
+        var message = data.TryGetValue("message", out var msg) ? msg : string.Empty;
+        var res = _runtime.ExecutePluginCommand(player, message);
         return JsonSerializer.Serialize(res);
     }
 

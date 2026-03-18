@@ -40,7 +40,7 @@ public sealed class OxygenRuntime
     private ServerEventPump? _eventPump;
     private CommandQueue? _cmdQueue;
 
-    private sealed record PluginEntry(AssemblyLoadContext? Ctx, object Instance, Type Type);
+    private sealed record PluginEntry(AssemblyLoadContext? Ctx, object Instance, Type Type, List<(string Method, string Path)> WebRoutes);
     private readonly Dictionary<string, PluginEntry> _loaded = new(StringComparer.OrdinalIgnoreCase);
     private FileSystemWatcher? _watcher;
     private readonly object _pluginLock = new();
@@ -310,10 +310,71 @@ public sealed class OxygenRuntime
         return new { ok = res.Success, response = res.Response, error = res.Error };
     }
 
+    public object ExecutePluginCommand(string playerQuery, string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return new { ok = false, error = "empty message" };
+
+        if (!(message.StartsWith("/") || message.StartsWith("!")))
+            message = "/" + message.Trim();
+
+        var player = ResolveApiPlayer(playerQuery);
+        if (player == null)
+            return new { ok = false, error = "player not found" };
+
+        var handled = TryHandlePlayerCommand(player, message);
+        return new
+        {
+            ok = handled,
+            player = player.Name,
+            steamId = player.SteamId,
+            databaseId = player.DatabaseId,
+            message
+        };
+    }
+
     public object BroadcastMessage(string message)
     {
         if (string.IsNullOrWhiteSpace(message)) return new { ok = false, error = "empty message" };
         return ExecuteCommand($"broadcast {message}");
+    }
+
+    private Oxygen.Csharp.API.PlayerBase? ResolveApiPlayer(string playerQuery)
+    {
+        if (!string.IsNullOrWhiteSpace(playerQuery))
+        {
+            var existing = _players.Find(playerQuery);
+            if (existing != null)
+                return existing;
+        }
+
+        var econ = GetEconomySnapshot().Map.Values
+            .OrderByDescending(x => x.LastLogin)
+            .ThenBy(x => x.Name)
+            .ToList();
+
+        EconomyEntry? match = null;
+        if (!string.IsNullOrWhiteSpace(playerQuery))
+        {
+            match = econ.FirstOrDefault(x =>
+                string.Equals(x.SteamId, playerQuery, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(x.Name, playerQuery, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(x.FakeName, playerQuery, StringComparison.OrdinalIgnoreCase));
+        }
+
+        match ??= econ.FirstOrDefault();
+        if (match == null)
+            return null;
+
+        var player = _players.UpsertFromLogin(
+            match.SteamId,
+            !string.IsNullOrWhiteSpace(match.Name) ? match.Name : (!string.IsNullOrWhiteSpace(match.FakeName) ? match.FakeName : match.SteamId),
+            match.PrisonerId,
+            match.AuthorityIp);
+        player.FakeName = match.FakeName;
+        player.Money = match.MoneyBalance;
+        player.FamePoints = Convert.ToInt32(match.FamePoints, CultureInfo.InvariantCulture);
+        return player;
     }
 
     public object GetStatus()
@@ -1127,6 +1188,7 @@ WHERE lower(be.asset) LIKE '%flag%'";
         {
             InvokePlugin(entry.Instance, "OnPluginUnload");
             InvokePlugin(entry.Instance, "OnUnload");
+            UnregisterWebRoutes(entry);
             if (entry.Ctx != null && entry.Ctx.IsCollectible)
                 entry.Ctx.Unload();
         }
@@ -1176,6 +1238,7 @@ WHERE lower(be.asset) LIKE '%flag%'";
         {
             InvokePlugin(entry.Instance, "OnPluginUnload");
             InvokePlugin(entry.Instance, "OnUnload");
+            UnregisterWebRoutes(entry);
             if (entry.Ctx != null && entry.Ctx.IsCollectible)
                 entry.Ctx.Unload();
             _loaded.Remove(key);
@@ -1213,11 +1276,12 @@ WHERE lower(be.asset) LIKE '%flag%'";
             _log.Info($"API Timers null? {Oxygen.Csharp.API.Oxygen.Timers is null}");
             RegisterCommands(plugin, pluginType);
             RegisterHooks(plugin, pluginType);
+            var webRoutes = RegisterWebRoutes(plugin, pluginType);
             InvokePlugin(plugin, "OnLoad");
             InvokePlugin(plugin, "OnPluginInit");
 
             var key = Path.GetFileNameWithoutExtension(sourceFile);
-            _loaded[key] = new PluginEntry(ctx, plugin, pluginType);
+            _loaded[key] = new PluginEntry(ctx, plugin, pluginType, webRoutes);
             _log.Info($"Loaded plugin: {pluginType.FullName}");
         }
         catch (Exception ex)
@@ -1290,6 +1354,65 @@ WHERE lower(be.asset) LIKE '%flag%'";
             {
                 _hooks.Register(eventName, wrapper);
             }
+        }
+    }
+
+    private List<(string Method, string Path)> RegisterWebRoutes(object plugin, Type pluginType)
+    {
+        var routes = new List<(string Method, string Path)>();
+        var methods = pluginType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        foreach (var method in methods)
+        {
+            var attr = method.GetCustomAttributes(inherit: true)
+                .FirstOrDefault(a => a.GetType().FullName == "Oxygen.Csharp.Web.WebRouteAttribute");
+            if (attr == null)
+                continue;
+
+            var path = GetAttrValue<string>(attr, "Path") ?? "/";
+            var httpMethod = (GetAttrValue<string>(attr, "Method") ?? "POST").ToUpperInvariant();
+            var requireAuth = GetAttrValue<bool>(attr, "RequireAuth");
+            _web.Register(httpMethod, path, req => InvokeWebRoute(plugin, method, req), requireAuth);
+            routes.Add((httpMethod, path));
+            _log.Info($"[WebRoute] Registered {httpMethod} {path} auth={requireAuth} from {pluginType.FullName}.{method.Name}");
+        }
+
+        return routes;
+    }
+
+    private void UnregisterWebRoutes(PluginEntry entry)
+    {
+        foreach (var route in entry.WebRoutes)
+        {
+            _web.Unregister(route.Method, route.Path);
+            _log.Info($"[WebRoute] Unregistered {route.Method} {route.Path} from {entry.Type.FullName}");
+        }
+    }
+
+    private string InvokeWebRoute(object plugin, MethodInfo method, WebApiRequest req)
+    {
+        try
+        {
+            var parameters = method.GetParameters();
+            object? result = parameters.Length switch
+            {
+                0 => method.Invoke(plugin, null),
+                1 => method.Invoke(plugin, new object?[] { req.BodyText }),
+                2 => method.Invoke(plugin, new object?[] { req.BodyText, req.Query }),
+                3 => method.Invoke(plugin, new object?[] { req.BodyText, req.Query, req.Headers }),
+                _ => throw new InvalidOperationException($"Unsupported WebRoute signature: {method.DeclaringType?.FullName}.{method.Name}")
+            };
+
+            return result?.ToString() ?? "{}";
+        }
+        catch (TargetInvocationException ex)
+        {
+            _log.Error($"[WebRoute] {method.DeclaringType?.FullName}.{method.Name} failed: {ex.InnerException?.GetBaseException().Message ?? ex.GetBaseException().Message}");
+            return "{\"ok\":false,\"error\":\"route_failed\"}";
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"[WebRoute] {method.DeclaringType?.FullName}.{method.Name} failed: {ex.GetBaseException().Message}");
+            return "{\"ok\":false,\"error\":\"route_failed\"}";
         }
     }
 

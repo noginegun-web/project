@@ -68,9 +68,9 @@ public:
     
     // Отправка событий в .NET
     static void SendEvent(const char* eventType, const char* data);
-    static void SendPlayerJoin(const char* steamId, const char* playerName);
-    static void SendPlayerLeave(const char* steamId);
-    static void SendChatMessage(const char* steamId, const char* message);
+    static void SendPlayerJoin(int playerId, const char* playerName, const char* steamId = nullptr);
+    static void SendPlayerLeave(int playerId, const char* playerName = nullptr, const char* steamId = nullptr);
+    static void SendChatMessage(int playerId, const char* playerName, const char* message, int chatType = 0, const char* steamId = nullptr);
     
     // Установка callback для команд
     static void SetCommandCallback(CommandCallback callback);

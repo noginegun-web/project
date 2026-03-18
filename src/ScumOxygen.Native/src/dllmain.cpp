@@ -48,6 +48,7 @@ namespace
     struct NativePlayerSnapshot
     {
         std::string Name;
+        std::string SteamId;
         int32_t PlayerId = 0;
         double X = 0.0;
         double Y = 0.0;
@@ -62,6 +63,7 @@ namespace
     constexpr uintptr_t kPlayerStatePlayerNamePrivateOffset = 0x300;
     constexpr uintptr_t kActorRootComponentOffset = 0x130;
     constexpr uintptr_t kSceneRelativeLocationOffset = 0x11C;
+    constexpr uintptr_t kPrisonerUserIdOffset = 0x0ED0;
     constexpr uintptr_t kPrisonerItemInHandsOffset = 0x18A8;
 
     std::wstring GetModuleDirectory()
@@ -297,7 +299,9 @@ namespace
     std::string BuildJoinLeaveJson(const NativePlayerSnapshot& player)
     {
         std::ostringstream ss;
-        ss << "{\"name\":\"" << JsonEscape(player.Name) << "\",\"playerId\":" << player.PlayerId << "}";
+        ss << "{\"name\":\"" << JsonEscape(player.Name)
+           << "\",\"playerId\":" << player.PlayerId
+           << ",\"steamId\":\"" << JsonEscape(player.SteamId) << "\"}";
         return ss.str();
     }
 
@@ -308,6 +312,7 @@ namespace
         ss.precision(2);
         ss << "{\"name\":\"" << JsonEscape(player.Name)
            << "\",\"playerId\":" << player.PlayerId
+           << ",\"steamId\":\"" << JsonEscape(player.SteamId) << "\""
            << ",\"x\":" << player.X
            << ",\"y\":" << player.Y
            << ",\"z\":" << player.Z
@@ -359,6 +364,7 @@ namespace
                     ReadVector(rootComponent + kSceneRelativeLocationOffset, snapshot.X, snapshot.Y, snapshot.Z);
                 }
 
+                ReadFStringUtf8(pawn + kPrisonerUserIdOffset, snapshot.SteamId);
                 ReadPointer(pawn + kPrisonerItemInHandsOffset, snapshot.ItemPtr);
             }
 

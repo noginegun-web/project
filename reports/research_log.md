@@ -334,3 +334,58 @@
 - Hosted live API test showed:
   - `POST /api/chat` -> `{"ok":true,"response":"native-pipe"}`
   - diagnostics line: `native-pipe -> #Announce WEB_DIAG_HELLO_20260318`
+# Research Log
+
+## 2026-03-18 - Oxygen parity workstream: hook-first runtime
+
+### Sources reviewed
+
+- https://oxymod.com/
+- https://docs.oxymod.com/guide/owners/installing-plugins.html
+- https://docs.oxymod.com/guide/web-request.html
+- https://docs.oxymod.com/guide/actors.html
+- https://github.com/Oxygen-SCUM/oxygen.plugins
+- Local SCUM UE4SS/CXX dumps in:
+  - `E:\SteamLibrary\steamapps\common\SCUM\SCUM\Binaries\Win64\CXXHeaderDump`
+
+### Confirmed findings
+
+- Original Oxygen exposes plugin-facing HTTP routes and server start helpers:
+  - `StartWebServer(int port, string token)`
+  - `[WebRoute(path, method, requireAuth)]`
+- Public docs confirm hot-reload by saving `.cs` plugin files into `SCUM/Binaries/Win64/oxygen/plugins/`.
+- Local SCUM dumps provide live class layout data we can trust more than generic UE guesses:
+  - `APrisoner._inventoryComponent` at `0x0EA8`
+  - `APrisoner._userId` at `0x0ED0`
+  - `APrisoner._itemInHands` at `0x18A8`
+  - `AConZPlayerController._userProfile` at `0x06D0`
+  - `AConZPlayerController._repFamePoints` at `0x07E4`
+  - `AConZPlayerController._moneyBalanceRep` at `0x07F0`
+
+### What was implemented from this research
+
+- Native bridge payload schema was updated to match managed DTO expectations.
+- Native player snapshots now include Steam IDs from live process memory.
+- Plugin web routes were implemented in runtime:
+  - attribute discovery
+  - auth flag support
+  - load/unload lifecycle cleanup
+- Added `POST /api/plugin-command` so plugin chat commands can be tested without a human joining the server.
+
+### Validation completed
+
+- Local dedicated server started successfully from `D:\SCUM_Dedicated\SCUM\Binaries\Win64`.
+- Verified:
+  - `GET http://127.0.0.1:8090/relay/ping`
+  - `POST http://127.0.0.1:8090/api/plugin-command`
+- Confirmed plugin-command execution in live logs:
+  - `/hello`
+  - `/travel`
+  - `/sethome base`
+  - `/homes`
+
+### Remaining gap after this pass
+
+- ProcessEvent detour is still not implemented.
+- Chat/inventory/respawn/melee/lockpick hooks still need to move from fallback sources to direct process events.
+- Map and equipment still need a stronger native actor/inventory pipeline.

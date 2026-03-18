@@ -193,7 +193,7 @@ public sealed class NativeBridgeService
         var dto = Deserialize<NativeJoinLeaveDto>(payload);
         if (dto == null || string.IsNullOrWhiteSpace(dto.Name)) return;
 
-        var player = _players.UpsertFromNative(dto.Name, new Vector3(0, 0, 0));
+        var player = _players.UpsertFromNative(dto.Name, new Vector3(0, 0, 0), dto.SteamId);
         player.NativePlayerId = dto.PlayerId;
         player.LastNativeUpdate = DateTimeOffset.UtcNow;
         _runtime.DispatchPlayerConnected(player);
@@ -206,16 +206,16 @@ public sealed class NativeBridgeService
 
         var player = !string.IsNullOrWhiteSpace(dto.Name)
             ? _players.Find(dto.Name)
-            : null;
+            : (!string.IsNullOrWhiteSpace(dto.SteamId) ? _players.Find(dto.SteamId) : null);
 
         if (player != null)
         {
-            _players.RemoveFromLogin(player.SteamId, player.Name);
+            _players.RemoveFromLogin(!string.IsNullOrWhiteSpace(dto.SteamId) ? dto.SteamId : player.SteamId, player.Name);
             _runtime.DispatchPlayerDisconnected(player);
         }
         else if (!string.IsNullOrWhiteSpace(dto.Name))
         {
-            _players.RemoveFromLogin(string.Empty, dto.Name);
+            _players.RemoveFromLogin(dto.SteamId, dto.Name);
         }
     }
 
@@ -224,7 +224,7 @@ public sealed class NativeBridgeService
         var dto = Deserialize<NativePlayerSnapshotDto>(payload);
         if (dto == null || string.IsNullOrWhiteSpace(dto.Name)) return;
 
-        var player = _players.UpsertFromNative(dto.Name, new Vector3(dto.X, dto.Y, dto.Z));
+        var player = _players.UpsertFromNative(dto.Name, new Vector3(dto.X, dto.Y, dto.Z), dto.SteamId);
         player.NativePlayerId = dto.PlayerId;
         player.Location = new Vector3(dto.X, dto.Y, dto.Z);
         player.LastNativeUpdate = DateTimeOffset.UtcNow;
@@ -241,7 +241,7 @@ public sealed class NativeBridgeService
         var dto = Deserialize<NativeItemInHandsDto>(payload);
         if (dto == null || string.IsNullOrWhiteSpace(dto.Name) || string.IsNullOrWhiteSpace(dto.ItemInHands)) return;
 
-        var player = _players.UpsertFromNative(dto.Name, new Vector3(0, 0, 0));
+        var player = _players.UpsertFromNative(dto.Name, new Vector3(0, 0, 0), dto.SteamId);
         player.NativePlayerId = dto.PlayerId;
         player.ItemInHands = dto.ItemInHands;
         player.LastNativeUpdate = DateTimeOffset.UtcNow;
@@ -253,7 +253,7 @@ public sealed class NativeBridgeService
         var dto = Deserialize<NativeChatDto>(payload);
         if (dto == null || string.IsNullOrWhiteSpace(dto.Name) || string.IsNullOrWhiteSpace(dto.Message)) return;
 
-        var player = _players.UpsertFromNative(dto.Name, new Vector3(0, 0, 0));
+        var player = _players.UpsertFromNative(dto.Name, new Vector3(0, 0, 0), dto.SteamId);
         player.NativePlayerId = dto.PlayerId;
         player.LastNativeUpdate = DateTimeOffset.UtcNow;
         _log.Info($"[NativeBridge] CHAT_MESSAGE name={dto.Name} playerId={dto.PlayerId} chatType={dto.ChatType} message={dto.Message}");
@@ -280,12 +280,14 @@ public sealed class NativeBridgeService
     private sealed class NativeJoinLeaveDto
     {
         public string Name { get; set; } = string.Empty;
+        public string SteamId { get; set; } = string.Empty;
         public int PlayerId { get; set; }
     }
 
     private sealed class NativePlayerSnapshotDto
     {
         public string Name { get; set; } = string.Empty;
+        public string SteamId { get; set; } = string.Empty;
         public int PlayerId { get; set; }
         public double X { get; set; }
         public double Y { get; set; }
@@ -296,6 +298,7 @@ public sealed class NativeBridgeService
     private sealed class NativeItemInHandsDto
     {
         public string Name { get; set; } = string.Empty;
+        public string SteamId { get; set; } = string.Empty;
         public int PlayerId { get; set; }
         public string ItemInHands { get; set; } = string.Empty;
     }
@@ -303,6 +306,7 @@ public sealed class NativeBridgeService
     private sealed class NativeChatDto
     {
         public string Name { get; set; } = string.Empty;
+        public string SteamId { get; set; } = string.Empty;
         public int PlayerId { get; set; }
         public string Message { get; set; } = string.Empty;
         public int ChatType { get; set; }

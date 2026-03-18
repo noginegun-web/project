@@ -1,8 +1,24 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Threading.Tasks;
 
 namespace Oxygen.Csharp.Web;
+
+[AttributeUsage(AttributeTargets.Method, Inherited = true)]
+public sealed class WebRouteAttribute : Attribute
+{
+    public string Path { get; }
+    public string Method { get; }
+    public bool RequireAuth { get; }
+
+    public WebRouteAttribute(string path, string method = "POST", bool requireAuth = true)
+    {
+        Path = string.IsNullOrWhiteSpace(path) ? "/" : path;
+        Method = string.IsNullOrWhiteSpace(method) ? "POST" : method.ToUpperInvariant();
+        RequireAuth = requireAuth;
+    }
+}
 
 public static class Http
 {
