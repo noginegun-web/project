@@ -44,18 +44,23 @@ public sealed class CommandService
 
     public async Task<CommandResult> ExecuteAsync(string command, CancellationToken ct = default)
     {
+        command = NormalizeServerCommand(command);
+
         if (!_cfg.Enabled || _rcon == null)
         {
             if (_nativeCommandSender?.Invoke(command) == true)
             {
+                _log.Info($"[CommandService] native-pipe -> {command}");
                 return CommandResult.Ok("native-pipe", TimeSpan.Zero);
             }
             if (_cfg.AllowConsoleFallback && _console.TrySend(command))
             {
+                _log.Info($"[CommandService] console -> {command}");
                 return CommandResult.Ok("console", TimeSpan.Zero);
             }
             if (_cfg.AllowFileQueue && EnqueueFileCommand(command))
             {
+                _log.Info($"[CommandService] file-queue -> {command}");
                 return CommandResult.Ok("file-queue", TimeSpan.Zero);
             }
             _log.Info($"[CommandService] Skipped command (RCON disabled): {command}");
@@ -71,18 +76,55 @@ public sealed class CommandService
             _log.Error($"[CommandService] Command failed: {ex.Message}");
             if (_nativeCommandSender?.Invoke(command) == true)
             {
+                _log.Info($"[CommandService] native-pipe fallback -> {command}");
                 return CommandResult.Ok("native-pipe", TimeSpan.Zero);
             }
             if (_cfg.AllowConsoleFallback && _console.TrySend(command))
             {
+                _log.Info($"[CommandService] console fallback -> {command}");
                 return CommandResult.Ok("console-fallback", TimeSpan.Zero);
             }
             if (_cfg.AllowFileQueue && EnqueueFileCommand(command))
             {
+                _log.Info($"[CommandService] file-queue fallback -> {command}");
                 return CommandResult.Ok("file-queue", TimeSpan.Zero);
             }
             return CommandResult.Fail(ex.Message, TimeSpan.Zero);
         }
+    }
+
+    private string NormalizeServerCommand(string command)
+    {
+        var trimmed = (command ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return string.Empty;
+
+        if (trimmed.StartsWith("#", StringComparison.Ordinal))
+            return trimmed;
+
+        var split = trimmed.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        var verb = split[0];
+        var rest = split.Length > 1 ? split[1] : string.Empty;
+
+        string normalized;
+        if (verb.Equals("broadcast", StringComparison.OrdinalIgnoreCase) ||
+            verb.Equals("announce", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = string.IsNullOrWhiteSpace(rest)
+                ? "#Announce"
+                : $"#Announce {rest}";
+        }
+        else
+        {
+            normalized = "#" + trimmed;
+        }
+
+        if (!string.Equals(normalized, trimmed, StringComparison.Ordinal))
+        {
+            _log.Info($"[CommandService] Normalize '{trimmed}' -> '{normalized}'");
+        }
+
+        return normalized;
     }
 
     private bool EnqueueFileCommand(string command)

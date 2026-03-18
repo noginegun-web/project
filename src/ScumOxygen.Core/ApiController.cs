@@ -34,6 +34,7 @@ public sealed class ApiController
         _runtime.Web.Register("GET", "/api/reload", ReloadPlugin);
         _runtime.Web.Register("POST", "/api/reload", ReloadPlugin);
         _runtime.Web.Register("GET", "/api/logs", _ => ReadLogs());
+        _runtime.Web.Register("GET", "/api/runtime-log", _ => ReadRuntimeLog());
     }
 
     private string GetServers()
@@ -171,6 +172,12 @@ public sealed class ApiController
         if (!File.Exists(logPath)) return JsonSerializer.Serialize(new { text = "" });
         var text = File.ReadAllText(logPath);
         return JsonSerializer.Serialize(new { text });
+    }
+
+    private string ReadRuntimeLog()
+    {
+        var data = _runtime.GetRuntimeLog();
+        return JsonSerializer.Serialize(data);
     }
 
     private static Dictionary<string, string> ReadJsonBody(WebApiRequest req)

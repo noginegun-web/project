@@ -256,6 +256,7 @@ public sealed class NativeBridgeService
         var player = _players.UpsertFromNative(dto.Name, new Vector3(0, 0, 0));
         player.NativePlayerId = dto.PlayerId;
         player.LastNativeUpdate = DateTimeOffset.UtcNow;
+        _log.Info($"[NativeBridge] CHAT_MESSAGE name={dto.Name} playerId={dto.PlayerId} chatType={dto.ChatType} message={dto.Message}");
         _runtime.TryHandlePlayerCommand(player, dto.Message);
         _runtime.DispatchPlayerChat(player, dto.Message, dto.ChatType);
     }

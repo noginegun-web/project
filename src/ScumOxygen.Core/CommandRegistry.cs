@@ -20,22 +20,26 @@ public sealed class CommandRegistry
     {
         if (!_handlers.TryGetValue(name, out var handler))
         {
+            log.Warn($"[CommandRegistry] Команда не найдена: {name} (user={userId})");
             return false;
         }
 
+        log.Info($"[CommandRegistry] Выполнение '{handler.Name}' для {userId} args=[{string.Join(", ", args ?? Array.Empty<string>())}]");
+
         if (!string.IsNullOrWhiteSpace(handler.Permission) && !permissions.HasPermission(userId, handler.Permission))
         {
-            log.Info($"Permission denied: {userId} -> {handler.Permission}");
+            log.Warn($"[CommandRegistry] Нет прав: {userId} -> {handler.Permission}");
             return true;
         }
 
         try
         {
-            handler.Handler(player, args);
+            handler.Handler(player, args ?? Array.Empty<string>());
+            log.Info($"[CommandRegistry] '{handler.Name}' выполнена успешно для {userId}");
         }
         catch (Exception ex)
         {
-            log.Error($"Command '{name}' failed: {ex.Message}");
+            log.Error($"[CommandRegistry] '{name}' failed: {ex}");
         }
 
         return true;

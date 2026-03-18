@@ -221,6 +221,14 @@ public sealed class OxygenRuntime
         return new { text };
     }
 
+    public object GetRuntimeLog()
+    {
+        return new
+        {
+            lines = _log.Snapshot(500)
+        };
+    }
+
     public object GetPlayers()
     {
         if (!_commandsSvc.Enabled && _players.List().Count == 0)
@@ -1257,6 +1265,7 @@ WHERE lower(be.asset) LIKE '%flag%'";
                 });
 
             _commands.Register(handler);
+            _log.Info($"[CommandRegistry] Зарегистрирована команда '{cmdName}' из {pluginType.FullName}.{m.Name} perm='{perm}'");
         }
     }
 
@@ -1433,7 +1442,12 @@ WHERE lower(be.asset) LIKE '%flag%'";
             return false;
 
         var userId = !string.IsNullOrWhiteSpace(player.SteamId) ? player.SteamId : $"name:{player.Name}";
-        _commands.TryExecute(cmd, args, _permissions, player, userId, _log);
+        _log.Info($"[CommandPipeline] Получена команда от {userId}: raw='{message}' cmd='{cmd}' args='{argsPart}'");
+        var handled = _commands.TryExecute(cmd, args, _permissions, player, userId, _log);
+        if (!handled)
+        {
+            _log.Warn($"[CommandPipeline] Обработчик не найден: '{cmd}' от {userId}");
+        }
         return true;
     }
 
@@ -1845,6 +1859,7 @@ WHERE lower(be.asset) LIKE '%flag%'";
             var cmd = userSplit.Length == 2 ? userSplit[1] : cmdPart;
             var args = string.IsNullOrWhiteSpace(argsPart) ? Array.Empty<string>() : argsPart.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
+            _log.Info($"[CommandQueue] user='{userId}' cmd='{cmd}' args='{argsPart}'");
             _commands.TryExecute(cmd, args, _permissions, ResolveCommandPlayer(userId), userId, _log);
         }
     }

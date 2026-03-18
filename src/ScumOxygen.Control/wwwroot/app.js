@@ -6,6 +6,7 @@ const state = {
   squads: [],
   kills: [],
   economy: { topMoney: [], topFame: [] },
+  runtimeLog: [],
   mapData: null,
   mapSelection: null,
   mapView: {
@@ -84,6 +85,8 @@ const els = {
   downloadPluginBtn: document.getElementById('downloadPluginBtn'),
   logs: document.getElementById('logs'),
   refreshLogs: document.getElementById('refreshLogs'),
+  diagnostics: document.getElementById('diagnostics'),
+  refreshDiagnostics: document.getElementById('refreshDiagnostics'),
   commandModal: document.getElementById('commandModal'),
   commandInput: document.getElementById('commandInput'),
   commandTitle: document.getElementById('commandTitle'),
@@ -173,6 +176,7 @@ function setActivePage(page) {
     economy: 'Экономика',
     plugins: 'Плагины',
     downloads: 'Загрузки',
+    diagnostics: 'Диагностика',
     logs: 'Логи'
   };
   els.breadcrumbs.textContent = `Платформа / ${titleMap[page] || 'Серверы'}`;
@@ -270,6 +274,7 @@ async function loadServers() {
     await loadKills();
     await loadEconomy();
     await loadMap();
+    await loadRuntimeLog();
   } catch {
     updateStatus(false);
     renderServers();
@@ -911,6 +916,16 @@ async function loadLogs() {
   els.logs.textContent = data.text || '';
 }
 
+async function loadRuntimeLog() {
+  const serverId = currentServer();
+  if (!serverId) return;
+  const data = await api(`/api/runtime-log?serverId=${encodeURIComponent(serverId)}`);
+  state.runtimeLog = Array.isArray(data.lines) ? data.lines : [];
+  if (els.diagnostics) {
+    els.diagnostics.textContent = state.runtimeLog.join('\n');
+  }
+}
+
 async function loadChat() {
   const serverId = currentServer();
   if (!serverId) return;
@@ -1193,6 +1208,9 @@ function refreshActive() {
     case 'plugins':
       loadPlugins();
       break;
+    case 'diagnostics':
+      loadRuntimeLog();
+      break;
     case 'logs':
       loadLogs();
       break;
@@ -1226,6 +1244,7 @@ els.refreshKills.addEventListener('click', loadKills);
 if (els.refreshEconomy) els.refreshEconomy.addEventListener('click', loadEconomy);
 els.refreshSquads.addEventListener('click', loadSquads);
 els.refreshLogs.addEventListener('click', loadLogs);
+if (els.refreshDiagnostics) els.refreshDiagnostics.addEventListener('click', loadRuntimeLog);
 els.chatChannel.addEventListener('change', renderChat);
 els.chatSearch.addEventListener('input', renderChat);
 els.sendChat.addEventListener('click', sendChat);

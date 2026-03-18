@@ -40,6 +40,7 @@
           <button class="nav-link" data-page="economy">Экономика</button>
           <button class="nav-link" data-page="plugins">Плагины</button>
           <button class="nav-link" data-page="downloads">Загрузки</button>
+          <button class="nav-link" data-page="diagnostics">Диагностика</button>
           <button class="nav-link" data-page="logs">Логи</button>
         </nav>
 
@@ -282,6 +283,19 @@
         </div>
         <div class="card">
           <pre id="logs"></pre>
+        </div>
+      </section>
+
+      <section class="page" data-page="diagnostics">
+        <div class="page-header">
+          <div>
+            <h2>Диагностика</h2>
+            <p>Живая трассировка пайплайна команд, чата и runtime.</p>
+          </div>
+          <button class="btn ghost" id="refreshDiagnostics">Обновить</button>
+        </div>
+        <div class="card">
+          <pre id="diagnostics"></pre>
         </div>
       </section>
     </main>

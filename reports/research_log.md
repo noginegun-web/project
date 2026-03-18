@@ -296,3 +296,41 @@
 - `src/ScumOxygen.Control/wwwroot/index.html`
 - `src/ScumOxygen.Control/wwwroot/app.js`
 - `README.md`
+
+## 2026-03-18 14:25:00 - Command pipeline fix on hosted server
+**Success:**
+- Identified the key server-command bug: runtime emitted raw SCUM verbs without `#` prefix, so commands could be parsed by plugins but still not execute correctly in SCUM.
+- Added central command normalization in `CommandService`:
+  - `broadcast ...` -> `#Announce ...`
+  - all other raw server commands -> prefixed with `#` unless already prefixed.
+- Added live runtime diagnostics API and panel support:
+  - `/api/runtime-log`
+  - command registration
+  - command parse/dispatch
+  - normalized command logging
+  - sender path logging (`native-pipe`, `file-queue`, `console`).
+- Built and published updated runtime package.
+- Verified with isolated hosted-like harness:
+  - `/hello` from SCUM chat log produced `#Announce Привет из SamplePlugin`
+  - `/sethome base` produced `#SendNotification 1 376 "Home 'base' has been successfully set!"`
+- Deployed updated runtime/web files to real hosting after stopping the server through hosting panel endpoint.
+- Restarted hosted server through hosting panel endpoint.
+- Verified hosted API after restart:
+  - `/api/status` responds
+  - `/api/runtime-log` responds
+  - runtime log shows new command registrations and diagnostics
+  - hosted web `/api/chat` test returns `native-pipe`
+  - diagnostics confirm `broadcast WEB_DIAG_HELLO_20260318` -> `#Announce WEB_DIAG_HELLO_20260318` via `native-pipe`
+
+**Failed/Blocked:**
+- Early startup commands from old chat log replay can still hit `file-queue` before native bridge connects; this is acceptable for startup replay but not ideal for perfect parity.
+- Full Oxygen parity is still blocked by unfinished native UE hook layer (`ProcessEvent`, inventory/equipment/world actor hooks).
+
+**Important evidence:**
+- Hosted runtime diagnostics showed historical command replay:
+  - `[EventPump] Chat parsed ... /sethome base`
+  - `[CommandPipeline] ... cmd='sethome'`
+  - `[CommandService] Normalize 'SendNotification ...' -> '#SendNotification ...'`
+- Hosted live API test showed:
+  - `POST /api/chat` -> `{"ok":true,"response":"native-pipe"}`
+  - diagnostics line: `native-pipe -> #Announce WEB_DIAG_HELLO_20260318`
