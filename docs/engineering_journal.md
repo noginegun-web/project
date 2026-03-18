@@ -138,3 +138,28 @@ Rule:
 - DB snapshots must never overwrite fresher live identity or coordinates with weaker fallback values.
 - Any live signal from process or live server logs must refresh the player recency marker before DB merge runs.
 - When validating player-facing data, always test one extra PollPlayers cycle after the live event to confirm fallback did not undo the fix.
+
+### 2026-03-18 - Hosted control endpoint and RPC-channel ProcessEvent hook
+
+What worked:
+- The ARK-Hoster control page was reverse engineered far enough to identify the real server control endpoint:
+  - `/servers/control/action/<serverId>/<action>`
+  - actions confirmed in page JS: `start`, `stop`, `restart`, `reinstall`, `backup`, `updatesrv`
+- The previous unfinished global ProcessEvent hook path was replaced with a safer vtable-based hook on the first live `UPlayerRpcChannel`.
+- The native layer now intercepts:
+  - `Chat_Server_BroadcastChatMessage`
+  - `Chat_Server_ProcessAdminCommand`
+- Native chat/admin command events are bridged into managed runtime through the existing event pipe instead of relying only on log parsing.
+- Managed runtime now suppresses duplicate live events when both the native path and the log fallback observe the same message.
+- `LogTailer` no longer replays entire old SCUM logs after restart; it attaches at EOF on first open.
+- Hosted packaging now mirrors the full runtime into the compatibility root `ScumOxygen`, so the legacy root no longer lags behind the real `NeDjin` runtime.
+
+What did not work:
+- The hook cannot install before the first real player/RPC channel exists, so startup logs correctly show a waiting state until a live player appears.
+- The host panel action endpoint was found, but the full hosted update cycle still needs an automated restart call wired into the deploy script.
+- This pass still does not provide full inventory/equipment parity; it hardens the command/chat path and hosted deploy path.
+
+Rule:
+- For SCUM dedicated process hooks, prefer hooking a concrete live class/vtable over patching the global UObject ProcessEvent blindly.
+- Treat log parsing as fallback only; when a native live event exists, dedupe it before plugin dispatch.
+- Any hosted package must keep both runtime roots (`NeDjin` and `ScumOxygen`) byte-equivalent until the compatibility root can be removed completely.

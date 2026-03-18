@@ -71,6 +71,7 @@ Copy-Item $TemplateDir $OutputDir -Recurse -Force
 
 $uploadDir = Join-Path $OutputDir 'UPLOAD_TO_SERVER'
 $targetRuntimeRoot = Join-Path $uploadDir 'NeDjin'
+$compatRuntimeRoot = Join-Path $uploadDir 'ScumOxygen'
 
 Copy-Item $proxyDll (Join-Path $uploadDir 'version.dll') -Force
 
@@ -201,6 +202,12 @@ foreach ($panelFile in $panelFiles) {
     $content = $content.Replace("apiKey: ''", "apiKey: 'ApiKey'")
     Set-Content $panelFile $content -Encoding UTF8
 }
+
+if (Test-Path $compatRuntimeRoot) {
+    Remove-Item $compatRuntimeRoot -Recurse -Force
+}
+
+Copy-Item $targetRuntimeRoot $compatRuntimeRoot -Recurse -Force
 
 $readme = @"
 NDJ_RELAY_DROPIN_2026-03-18

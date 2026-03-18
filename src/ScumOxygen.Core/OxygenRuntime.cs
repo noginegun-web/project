@@ -30,6 +30,9 @@ public sealed class OxygenRuntime
     private readonly PlayerRegistry _players;
     private readonly ChatHistory _chat = new(400);
     private readonly KillHistory _kills = new(400);
+    private readonly object _liveEventDedupLock = new();
+    private readonly Dictionary<string, DateTimeOffset> _recentChatEvents = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> _recentCommandEvents = new(StringComparer.Ordinal);
     private NativeBridgeService? _nativeBridge;
     private string? _resolvedServerName;
     private string? _resolvedServerId;
@@ -44,6 +47,9 @@ public sealed class OxygenRuntime
     private readonly Dictionary<string, PluginEntry> _loaded = new(StringComparer.OrdinalIgnoreCase);
     private FileSystemWatcher? _watcher;
     private readonly object _pluginLock = new();
+
+    private static readonly TimeSpan ChatDedupWindow = TimeSpan.FromMilliseconds(900);
+    private static readonly TimeSpan CommandDedupWindow = TimeSpan.FromMilliseconds(1200);
 
     public OxygenRuntime(Logger log)
     {
@@ -1552,8 +1558,48 @@ WHERE lower(be.asset) LIKE '%flag%'";
         _hooks.Emit("player_kill", killer, victim, info);
     }
 
+    private bool IsDuplicateLiveEvent(
+        Dictionary<string, DateTimeOffset> bucket,
+        string key,
+        TimeSpan window)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return false;
+
+        var now = DateTimeOffset.UtcNow;
+        lock (_liveEventDedupLock)
+        {
+            if (bucket.TryGetValue(key, out var lastSeen) && now - lastSeen <= window)
+            {
+                bucket[key] = now;
+                return true;
+            }
+
+            bucket[key] = now;
+
+            if (bucket.Count > 512)
+            {
+                var cutoff = now - TimeSpan.FromMinutes(3);
+                foreach (var staleKey in bucket.Where(p => p.Value < cutoff).Select(p => p.Key).ToArray())
+                {
+                    bucket.Remove(staleKey);
+                }
+            }
+        }
+
+        return false;
+    }
+
     internal bool DispatchPlayerChat(Oxygen.Csharp.API.PlayerBase player, string message, int chatType)
     {
+        var userId = !string.IsNullOrWhiteSpace(player.SteamId) ? player.SteamId : $"name:{player.Name}";
+        var chatKey = $"{userId}|{chatType}|{message}";
+        if (IsDuplicateLiveEvent(_recentChatEvents, chatKey, ChatDedupWindow))
+        {
+            _log.Info($"[ChatPipeline] Дубликат подавлен: user='{userId}' type={chatType} message='{message}'");
+            return true;
+        }
+
         _chat.Add(new ChatMessage(
             DateTimeOffset.UtcNow,
             ChatTypeName(chatType),
@@ -1588,6 +1634,13 @@ WHERE lower(be.asset) LIKE '%flag%'";
             return false;
 
         var userId = !string.IsNullOrWhiteSpace(player.SteamId) ? player.SteamId : $"name:{player.Name}";
+        var commandKey = $"{userId}|{message.Trim()}";
+        if (IsDuplicateLiveEvent(_recentCommandEvents, commandKey, CommandDedupWindow))
+        {
+            _log.Info($"[CommandPipeline] Дубликат подавлен: user='{userId}' raw='{message}'");
+            return true;
+        }
+
         _log.Info($"[CommandPipeline] Получена команда от {userId}: raw='{message}' cmd='{cmd}' args='{argsPart}'");
         var handled = _commands.TryExecute(cmd, args, _permissions, player, userId, _log);
         if (!handled)

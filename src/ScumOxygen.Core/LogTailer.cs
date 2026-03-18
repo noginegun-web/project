@@ -13,6 +13,7 @@ public sealed class LogTailer
     private readonly Encoding _encoding;
     private string? _currentFile;
     private long _position;
+    private bool _initialized;
 
     public LogTailer(string directory, string pattern, Encoding encoding)
     {
@@ -29,7 +30,8 @@ public sealed class LogTailer
         if (!string.Equals(_currentFile, file, StringComparison.OrdinalIgnoreCase))
         {
             _currentFile = file;
-            _position = 0;
+            _position = _initialized && File.Exists(file) ? new FileInfo(file).Length : 0;
+            _initialized = true;
         }
 
         if (_currentFile == null) return Array.Empty<string>();

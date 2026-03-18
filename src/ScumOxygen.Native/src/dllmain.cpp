@@ -498,6 +498,7 @@ namespace
 
         while (g_Running)
         {
+            HookManager::HookProcessEvent();
             PublishPlayerState();
             std::this_thread::sleep_for(1000ms);
         }

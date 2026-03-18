@@ -444,3 +444,51 @@
   - quick access slots from process memory instead of DB fallback
   - equipment/clothes extraction
   - `ProcessEvent` hook completion
+
+## 2026-03-18 - Hosted action endpoint and safer ProcessEvent interception
+
+### Sources reviewed
+
+- ARK-Hoster control page JS:
+  - `/application/public/ajax/servers/control/index.js`
+- Local native hook implementation:
+  - `src/ScumOxygen.Native/src/hooks.cpp`
+  - `src/ScumOxygen.Native/src/dllmain.cpp`
+- Managed runtime dispatch/fallback:
+  - `src/ScumOxygen.Core/OxygenRuntime.cs`
+  - `src/ScumOxygen.Core/LogTailer.cs`
+- Hosted packaging:
+  - `scripts/Build-HostedPackage.ps1`
+
+### Confirmed findings
+
+- The control actions in ARK-Hoster are performed by GET requests to:
+  - `/servers/control/action/<serverId>/<action>`
+- The page-specific AJAX bundle, not the global scripts, contains the real handler.
+- The old project state still had an unfinished `HookProcessEvent()` path, which explained why process-first parity with Oxygen was stalling.
+- A vtable hook on the first live `UPlayerRpcChannel` is a safer and more deterministic bridge point for player chat/admin command traffic than a blind global detour.
+- Replaying old `chat_*.log` on service restart can create false positives during plugin validation; the tailer must attach at EOF.
+- The hosted compatibility runtime root can silently drift behind the real runtime root if packaging copies only a subset.
+
+### What was implemented from this research
+
+- Added runtime discovery and vtable patching for live `UPlayerRpcChannel::ProcessEvent`.
+- Added native extraction for broadcast/admin chat payloads and forward them through `Bridge::SendEvent` as `CHAT_MESSAGE`.
+- Added managed dedupe windows for chat and slash-command events.
+- Changed `LogTailer` startup position to the current file end.
+- Changed hosted packaging so `UPLOAD_TO_SERVER\ScumOxygen` becomes a full mirror of `UPLOAD_TO_SERVER\NeDjin`.
+
+### Validation completed
+
+- Local native module compiled successfully.
+- Local managed runtime compiled successfully.
+- Hosted package rebuilt successfully.
+- Local dedicated server booted successfully after redeploy.
+- Local plugin-command execution still works after the hook/fallback changes.
+- The hosted panel action URL was extracted directly from the real page JS.
+
+### Remaining gap after this pass
+
+- A real connected player is still needed to validate live RPC hook installation end-to-end.
+- Full actor/equipment/inventory parity still depends on additional native extraction work.
+- Hosted deployment automation still needs the restart/upload orchestration finished against the discovered panel endpoint.
