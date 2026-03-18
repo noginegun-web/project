@@ -10,6 +10,7 @@ public sealed class PlayerRegistry
 {
     private readonly Dictionary<string, PlayerBase> _bySteam = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, PlayerBase> _byName = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan LiveIdentityTtl = TimeSpan.FromMinutes(15);
 
     public IReadOnlyList<PlayerBase> List()
     {
@@ -38,10 +39,10 @@ public sealed class PlayerRegistry
         if (_bySteam.TryGetValue(key, out var existing))
         {
             if (hasSteam) existing.SteamId = steamId;
-            if (!string.IsNullOrWhiteSpace(name)) existing.Name = name;
+            if (!string.IsNullOrWhiteSpace(name) && !ShouldPreserveLiveIdentity(existing, name)) existing.Name = name;
             if (databaseId > 0) existing.DatabaseId = databaseId;
             if (!string.IsNullOrWhiteSpace(ipAddress)) existing.IpAddress = ipAddress;
-            if (location.HasValue) existing.Location = location.Value;
+            if (location.HasValue && (HasKnownLocation(location.Value) || !HasKnownLocation(existing.Location))) existing.Location = location.Value;
             if (!string.IsNullOrWhiteSpace(existing.Name)) _byName[existing.Name] = existing;
             return existing;
         }
@@ -54,10 +55,11 @@ public sealed class PlayerRegistry
             {
                 _bySteam.Remove(nameKey);
                 temp.SteamId = steamId;
-                temp.Name = name;
+                if (!ShouldPreserveLiveIdentity(temp, name))
+                    temp.Name = name;
                 if (databaseId > 0) temp.DatabaseId = databaseId;
                 if (!string.IsNullOrWhiteSpace(ipAddress)) temp.IpAddress = ipAddress;
-                if (location.HasValue) temp.Location = location.Value;
+                if (location.HasValue && (HasKnownLocation(location.Value) || !HasKnownLocation(temp.Location))) temp.Location = location.Value;
                 _bySteam[steamId] = temp;
                 _byName[name] = temp;
                 return temp;
@@ -190,11 +192,14 @@ public sealed class PlayerRegistry
             }
 
             p.SteamId = s.SteamId;
-            p.Name = s.Name;
-            p.IpAddress = s.IpAddress;
+            if (!string.IsNullOrWhiteSpace(s.Name) && !ShouldPreserveLiveIdentity(p, s.Name))
+                p.Name = s.Name;
+            if (!string.IsNullOrWhiteSpace(s.IpAddress))
+                p.IpAddress = s.IpAddress;
             p.DatabaseId = s.Id;
             p.Money = s.Money;
-            p.Location = s.Location;
+            if (HasKnownLocation(s.Location) || !HasKnownLocation(p.Location))
+                p.Location = s.Location;
             if (!string.IsNullOrWhiteSpace(p.Name))
                 _byName[p.Name] = p;
         }
@@ -212,6 +217,22 @@ public sealed class PlayerRegistry
         }
 
         return (joined, left);
+    }
+
+    private static bool ShouldPreserveLiveIdentity(PlayerBase player, string incomingName)
+    {
+        if (string.IsNullOrWhiteSpace(player.Name) || string.IsNullOrWhiteSpace(incomingName))
+            return false;
+
+        if (string.Equals(player.Name, incomingName, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return player.LastNativeUpdate > DateTimeOffset.UtcNow.Subtract(LiveIdentityTtl);
+    }
+
+    private static bool HasKnownLocation(Vector3 location)
+    {
+        return Math.Abs(location.X) > 0.001 || Math.Abs(location.Y) > 0.001 || Math.Abs(location.Z) > 0.001;
     }
 }
 

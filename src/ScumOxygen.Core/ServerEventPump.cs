@@ -149,6 +149,7 @@ public sealed class ServerEventPump
                     if (TryParseChatLine(line, out var chat))
                     {
                         var player = _players.UpsertFromLogin(chat.SteamId, chat.Name, chat.DatabaseId, chat.IpAddress);
+                        player.LastNativeUpdate = DateTimeOffset.UtcNow;
                         var chatType = MapChatType(chat.Channel);
 
                         if (chat.Message.StartsWith("/") || chat.Message.StartsWith("!"))
@@ -178,6 +179,7 @@ public sealed class ServerEventPump
                     if (TryParseLoginLine(line, out var login))
                     {
                         var player = _players.UpsertFromLogin(login.SteamId, login.Name, login.DatabaseId, login.IpAddress, login.Location);
+                        player.LastNativeUpdate = DateTimeOffset.UtcNow;
                         _log.Info($"[EventPump] Login parsed: steamId={login.SteamId}, dbId={login.DatabaseId}, name={login.Name}, join={login.IsJoin}, ip={login.IpAddress}, loc={login.Location}");
 
                         if (login.IsJoin)

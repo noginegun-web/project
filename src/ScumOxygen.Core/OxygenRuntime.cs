@@ -251,7 +251,7 @@ public sealed class OxygenRuntime
                 LastLogin = econ.Map.TryGetValue(p.SteamId, out var e4) ? e4.LastLogin : "",
                 LastLogout = econ.Map.TryGetValue(p.SteamId, out var e5) ? e5.LastLogout : "",
                 PrisonerId = econ.Map.TryGetValue(p.SteamId, out var e6) ? e6.PrisonerId : 0,
-                FakeName = econ.Map.TryGetValue(p.SteamId, out var e7) ? e7.FakeName : "",
+                FakeName = econ.Map.TryGetValue(p.SteamId, out var e7) && !string.IsNullOrWhiteSpace(e7.FakeName) ? e7.FakeName : p.FakeName,
                 AuthorityName = econ.Map.TryGetValue(p.SteamId, out var e8) ? e8.AuthorityName : "",
                 AuthorityIp = econ.Map.TryGetValue(p.SteamId, out var e9) ? e9.AuthorityIp : "",
                 CreatedAt = econ.Map.TryGetValue(p.SteamId, out var e10) ? e10.CreationTime : "",
@@ -348,6 +348,26 @@ public sealed class OxygenRuntime
                 return existing;
         }
 
+        var livePlayers = _players.List()
+            .Where(p => p.LastNativeUpdate > DateTimeOffset.UtcNow.AddMinutes(-5))
+            .OrderByDescending(p => p.LastNativeUpdate)
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(playerQuery))
+        {
+            var liveMatch = livePlayers.FirstOrDefault(p =>
+                string.Equals(p.SteamId, playerQuery, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(p.Name, playerQuery, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(p.FakeName, playerQuery, StringComparison.OrdinalIgnoreCase));
+
+            if (liveMatch != null)
+                return liveMatch;
+        }
+        else if (livePlayers.Count > 0)
+        {
+            return livePlayers[0];
+        }
+
         var econ = GetEconomySnapshot().Map.Values
             .OrderByDescending(x => x.LastLogin)
             .ThenBy(x => x.Name)
@@ -359,7 +379,8 @@ public sealed class OxygenRuntime
             match = econ.FirstOrDefault(x =>
                 string.Equals(x.SteamId, playerQuery, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(x.Name, playerQuery, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(x.FakeName, playerQuery, StringComparison.OrdinalIgnoreCase));
+                string.Equals(x.FakeName, playerQuery, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(x.AuthorityName, playerQuery, StringComparison.OrdinalIgnoreCase));
         }
 
         match ??= econ.FirstOrDefault();
@@ -387,7 +408,9 @@ public sealed class OxygenRuntime
             serverIdentitySource = source,
             rcon = _commandsSvc.Enabled,
             players = _players.List().Count,
-            playerSource = _commandsSvc.Enabled ? "rcon" : "db"
+            playerSource = _players.List().Any(p => p.LastNativeUpdate > DateTimeOffset.UtcNow.AddMinutes(-2))
+                ? "native"
+                : (_commandsSvc.Enabled ? "rcon" : "db")
         };
     }
 

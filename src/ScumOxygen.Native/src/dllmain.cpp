@@ -48,7 +48,10 @@ namespace
     struct NativePlayerSnapshot
     {
         std::string Name;
+        std::string ProfileName;
+        std::string FakeName;
         std::string SteamId;
+        int64_t DatabaseId = 0;
         int32_t PlayerId = 0;
         double X = 0.0;
         double Y = 0.0;
@@ -64,6 +67,9 @@ namespace
     constexpr uintptr_t kActorRootComponentOffset = 0x130;
     constexpr uintptr_t kSceneRelativeLocationOffset = 0x11C;
     constexpr uintptr_t kPrisonerUserIdOffset = 0x0ED0;
+    constexpr uintptr_t kPrisonerServerUserProfileIdOffset = 0x0EE0;
+    constexpr uintptr_t kPrisonerUserProfileNameOffset = 0x0EE8;
+    constexpr uintptr_t kPrisonerUserFakeNameOffset = 0x0EF8;
     constexpr uintptr_t kPrisonerItemInHandsOffset = 0x18A8;
 
     std::wstring GetModuleDirectory()
@@ -242,6 +248,11 @@ namespace
         return MemoryReader::ReadMemory(address, &value, sizeof(value));
     }
 
+    bool ReadInt64(uintptr_t address, int64_t& value)
+    {
+        return MemoryReader::ReadMemory(address, &value, sizeof(value));
+    }
+
     bool ReadVector(uintptr_t address, double& x, double& y, double& z)
     {
         FVectorMem vec{};
@@ -300,7 +311,10 @@ namespace
     {
         std::ostringstream ss;
         ss << "{\"name\":\"" << JsonEscape(player.Name)
+           << "\",\"profileName\":\"" << JsonEscape(player.ProfileName)
+           << "\",\"fakeName\":\"" << JsonEscape(player.FakeName)
            << "\",\"playerId\":" << player.PlayerId
+           << ",\"databaseId\":" << player.DatabaseId
            << ",\"steamId\":\"" << JsonEscape(player.SteamId) << "\"}";
         return ss.str();
     }
@@ -311,12 +325,15 @@ namespace
         ss.setf(std::ios::fixed);
         ss.precision(2);
         ss << "{\"name\":\"" << JsonEscape(player.Name)
+           << "\",\"profileName\":\"" << JsonEscape(player.ProfileName)
+           << "\",\"fakeName\":\"" << JsonEscape(player.FakeName)
            << "\",\"playerId\":" << player.PlayerId
+           << ",\"databaseId\":" << player.DatabaseId
            << ",\"steamId\":\"" << JsonEscape(player.SteamId) << "\""
            << ",\"x\":" << player.X
            << ",\"y\":" << player.Y
            << ",\"z\":" << player.Z
-           << ",\"itemInHands\":\"\"}";
+            << ",\"itemInHands\":\"\"}";
         return ss.str();
     }
 
@@ -365,7 +382,15 @@ namespace
                 }
 
                 ReadFStringUtf8(pawn + kPrisonerUserIdOffset, snapshot.SteamId);
+                ReadInt64(pawn + kPrisonerServerUserProfileIdOffset, snapshot.DatabaseId);
+                ReadFStringUtf8(pawn + kPrisonerUserProfileNameOffset, snapshot.ProfileName);
+                ReadFStringUtf8(pawn + kPrisonerUserFakeNameOffset, snapshot.FakeName);
                 ReadPointer(pawn + kPrisonerItemInHandsOffset, snapshot.ItemPtr);
+            }
+
+            if (!snapshot.ProfileName.empty())
+            {
+                snapshot.Name = snapshot.ProfileName;
             }
 
             players.push_back(snapshot);
@@ -387,7 +412,7 @@ namespace
 
         for (const auto& player : currentPlayers)
         {
-            const auto key = player.Name;
+            const auto key = !player.SteamId.empty() ? player.SteamId : player.Name;
             currentMap[key] = player;
 
             if (lastPlayers.find(key) == lastPlayers.end())

@@ -111,3 +111,30 @@ Rule:
 - Never run `Build-HostedPackage.ps1` in parallel with publish steps; package only after publish finishes.
 - When validating new runtime API surface, verify the deployed `ScumOxygen.Runtime.dll` hash matches the published `ScumOxygen.Core.dll`.
 - For no-human plugin tests, prefer synthetic server-side execution paths such as `/api/plugin-command` over trying to mutate locked SCUM log files.
+
+### 2026-03-18 - Live identity preservation between EventPump and DB fallback
+
+What worked:
+- Native/live identity and DB fallback no longer fight each other on every poll cycle.
+- Added live prisoner fields from process memory to native snapshots:
+  - _serverUserProfileId
+  - _userProfileName
+  - _userFakeName
+- EventPump-driven chat activity now marks the player as live enough to preserve current identity and location.
+- Local dedicated validation proved the full no-human path:
+  - created synthetic chat_*.log
+  - EventPump parsed /hello
+  - command registry dispatched it
+  - final server command became #Announce ...
+  - after the next PollPlayers cycle, the player still stayed NeDjin instead of reverting to the DB fallback name log323
+- /api/players now keeps the live-facing player name after fallback refresh, and /api/status reports playerSource = native after live activity.
+
+What did not work:
+- Before this fix, PlayerRegistry.UpdateFromSnapshot() overwrote newer live identity with older DB snapshot names and zero coordinates.
+- Using DB-only player resolution for plugin-command produced misleading names even when better live identity had already appeared.
+- This pass still does not resolve live ItemInHands naming or full equipment slots from process memory.
+
+Rule:
+- DB snapshots must never overwrite fresher live identity or coordinates with weaker fallback values.
+- Any live signal from process or live server logs must refresh the player recency marker before DB merge runs.
+- When validating player-facing data, always test one extra PollPlayers cycle after the live event to confirm fallback did not undo the fix.

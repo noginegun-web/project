@@ -389,3 +389,58 @@
 - ProcessEvent detour is still not implemented.
 - Chat/inventory/respawn/melee/lockpick hooks still need to move from fallback sources to direct process events.
 - Map and equipment still need a stronger native actor/inventory pipeline.
+## 2026-03-18 - Preserving live player identity across fallback refresh
+
+### Sources reviewed
+
+- Local project runtime and registry merge paths:
+  - `src/ScumOxygen.Core/PlayerRegistry.cs`
+  - `src/ScumOxygen.Core/ServerEventPump.cs`
+  - `src/ScumOxygen.Core/NativeBridgeService.cs`
+  - `src/ScumOxygen.Native/src/dllmain.cpp`
+- Local SCUM dump data in `ConZ.hpp`:
+  - `APrisoner._serverUserProfileId` at `0x0EE0`
+  - `APrisoner._userProfileName` at `0x0EE8`
+  - `APrisoner._userFakeName` at `0x0EF8`
+
+### Confirmed findings
+
+- The biggest cause of bad player cards and wrong map/player identity was not only missing hooks.
+- A second systemic problem existed in fallback merge logic:
+  - live identity entered the runtime
+  - DB snapshot poll ran later
+  - the runtime overwrote the fresher player name/location with weaker fallback data
+- This explains why the panel could temporarily look correct and then drift back to wrong names or stale positions.
+
+### What was implemented from this research
+
+- Native snapshot JSON now carries:
+  - `profileName`
+  - `fakeName`
+  - `databaseId`
+- Runtime bridge now consumes those fields and applies them to `PlayerBase`.
+- `PlayerRegistry` now preserves live identity and known coordinates when DB fallback is weaker.
+- `ServerEventPump` now refreshes the player's live recency marker on parsed chat/login events.
+- `ResolveApiPlayer()` now prefers recent live players before DB fallback when no explicit player match is found.
+
+### Validation completed
+
+- Local dedicated server restarted successfully with the new package.
+- Verified web/plugin layer still works:
+  - `GET /relay/ping`
+- Verified synthetic in-game command path:
+  - wrote a new Unicode `chat_*.log` line with `/hello`
+  - EventPump parsed it
+  - command registry executed it
+  - output normalized to `#Announce Привет из SamplePlugin`
+- Verified post-refresh identity stability:
+  - after waiting through another `PollPlayers` cycle, `/api/players` still returned `Name = NeDjin`
+  - player source stayed `native`
+
+### Remaining gap after this pass
+
+- Full process-first player/equipment parity still needs:
+  - item name resolution from live `AItem*`
+  - quick access slots from process memory instead of DB fallback
+  - equipment/clothes extraction
+  - `ProcessEvent` hook completion
