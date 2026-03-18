@@ -444,7 +444,11 @@ namespace
 
         if (_stricmp(commandType.c_str(), "CMD") == 0)
         {
-            if (TrySendConsoleCommand(payload))
+            if (HookManager::ExecuteAdminCommandDirect(payload.c_str()))
+            {
+                LogLine(std::string("CMD(process-event) -> ") + payload);
+            }
+            else if (TrySendConsoleCommand(payload))
             {
                 LogLine(std::string("CMD(console) -> ") + payload);
             }
@@ -458,7 +462,11 @@ namespace
 
         if (_stricmp(commandType.c_str(), "RAW") == 0)
         {
-            if (TrySendConsoleCommand(payload))
+            if (HookManager::ExecuteAdminCommandDirect(payload.c_str()))
+            {
+                LogLine(std::string("RAW(process-event) -> ") + payload);
+            }
+            else if (TrySendConsoleCommand(payload))
             {
                 LogLine(std::string("RAW(console) -> ") + payload);
             }

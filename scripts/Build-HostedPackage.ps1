@@ -190,6 +190,18 @@ $antiVpnConfig = [ordered]@{
 }
 $antiVpnConfig | ConvertTo-Json -Depth 3 | Set-Content $antiVpnConfigPath -Encoding UTF8
 
+$panelTransportPath = Join-Path $targetRuntimeRoot 'oxygen\configs\panel_transport.json'
+$panelTransport = [ordered]@{
+    Enabled = $false
+    PreferPanelTransport = $false
+    PanelBaseUrl = 'https://panel.ark-hoster.ru'
+    Email = ''
+    Password = ''
+    ServerId = ''
+    TimeoutSeconds = 20
+}
+$panelTransport | ConvertTo-Json -Depth 3 | Set-Content $panelTransportPath -Encoding UTF8
+
 $panelFiles = @(
     (Join-Path $OutputDir 'LOCAL_PANEL\app.js'),
     (Join-Path $targetRuntimeRoot 'oxygen\web\app.js')

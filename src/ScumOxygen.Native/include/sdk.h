@@ -35,6 +35,8 @@ public:
     
     // Поиск GWorld
     static uintptr_t FindGWorld();
+    static uintptr_t FindGUObjectArray();
+    static uintptr_t FindFNameToString();
     
 private:
     static HANDLE s_ProcessHandle;
@@ -56,6 +58,9 @@ public:
     static bool HookPlayerLogin();
     static bool HookPlayerLogout();
     static bool HookChatMessage();
+
+    // Прямой вызов SCUM admin-команд через live UPlayerRpcChannel/ProcessEvent.
+    static bool ExecuteAdminCommandDirect(const char* commandText);
 };
 
 // Команды от .NET хоста

@@ -492,3 +492,47 @@
 - A real connected player is still needed to validate live RPC hook installation end-to-end.
 - Full actor/equipment/inventory parity still depends on additional native extraction work.
 - Hosted deployment automation still needs the restart/upload orchestration finished against the discovered panel endpoint.
+
+### 2026-03-18 - Dedicated-only SDK refresh and object-system correction
+
+Sources used:
+- Fresh local `UE4SS.log` from `D:\SCUM_Dedicated\SCUM\Binaries\Win64`
+- Fresh local `UE4SS_ObjectDump.txt`
+- Fresh local `CXXHeaderDump\ConZ.hpp`
+- Fresh local `CXXHeaderDump\Engine.hpp`
+
+Confirmed findings:
+- The previous SDK basis was stale relative to the current dedicated server build.
+- Dedicated `UE4SS` confirmed:
+  - `GUObjectArray = 0x7ff67b9487d0`
+  - `MainExe = 0x7ff6748e0000`
+  - `GUObjectArray RVA = 0x070687D0`
+  - `FName::ToString RVA = 0x02762050`
+- `GUObjectArray` must be treated as outer `FUObjectArray`, not a raw `TUObjectArray`.
+- `ObjObjects` starts at `+0x10`, after which the familiar chunked object array layout becomes valid.
+- Current dedicated dump confirmed stable comparison indices for key hook targets:
+  - `MiscStatics = 0xAF5C8`
+  - `PlayerRpcChannel = 0xB0541`
+  - `Test_ProcessAdminCommand = 0xAF682`
+  - `Chat_Server_BroadcastChatMessage = 0x432B8`
+  - `Chat_Server_ProcessAdminCommand = 0x432C9`
+- After correcting `FUObjectArray` layout and waiting for steady-state, process-first command execution works through `UMiscStatics::Test_ProcessAdminCommand`.
+
+What was implemented from this research:
+- Added dedicated-aware `FindGUObjectArray()` and `FindFNameToString()`.
+- Switched native object scanning to `GUObjectArray + 0x10`.
+- Added current dedicated-name fallbacks for critical class/function indices.
+- Added better diagnostics around static admin path resolution in `native.log`.
+
+Validation completed:
+- Fresh dedicated UE4SS dump generated successfully.
+- Fresh CXX/UHT headers generated successfully from dedicated build.
+- Local `plugin-command` validation confirmed `CMD(process-event/static)` for:
+  - `Announce Привет из SamplePlugin`
+  - `SendNotification ... Home 'base' has been successfully set!`
+  - `SendNotification ... YOUR HOMES`
+  - `SendNotification ... FAST TRAVEL`
+
+Remaining gap after this pass:
+- Some startup-time plugin actions still hit console fallback before the static path becomes ready.
+- Real player chat from a live remote session still needs hosted validation after redeploy.

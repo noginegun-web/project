@@ -5,6 +5,7 @@
 #include <map>
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <cstdio>
 #include <fstream>
 #include <mutex>
@@ -30,6 +31,8 @@ static constexpr uintptr_t kPrisonerUserFakeNameOffset = 0x0EF8;
 
 namespace
 {
+    constexpr uintptr_t kFUObjectArrayObjObjectsOffset = 0x10;
+
     struct TArrayHeader
     {
         uintptr_t Data;
@@ -54,20 +57,93 @@ namespace
         int32_t PlayerId = 0;
     };
 
+    struct FUObjectItemMem
+    {
+        uintptr_t Object;
+        uint8_t Pad[0x10];
+    };
+
+    struct TUObjectArrayMem
+    {
+        uintptr_t Objects;
+        uint8_t Pad8[0x8];
+        int32_t MaxElements;
+        int32_t NumElements;
+        int32_t MaxChunks;
+        int32_t NumChunks;
+    };
+
     using ProcessEventFn = void(__fastcall*)(UObject* object, UObject* function, void* params);
+    struct FStringParam
+    {
+        wchar_t* Data;
+        int32_t Count;
+        int32_t Max;
+    };
+
+    struct AdminCommandParams
+    {
+        FStringParam commandText;
+    };
+
+    struct StaticAdminCommandParams
+    {
+        UObject* WorldContextObject;
+        FStringParam commandText;
+    };
+
+    struct UFieldRaw
+    {
+        UObject Object;
+        UFieldRaw* Next;
+    };
+
+    struct UStructRaw
+    {
+        UFieldRaw Field;
+        uint8_t Pad30[0x10];
+        UStructRaw* SuperStruct;
+        UFieldRaw* Children;
+        void* ChildProperties;
+        int32_t Size;
+        int16_t MinAlignment;
+        uint8_t Pad5E[0x52];
+    };
+
+    struct UClassRaw
+    {
+        UStructRaw Struct;
+        uint8_t PadB0[0x20];
+        uint64_t CastFlags;
+        uint8_t PadD8[0x40];
+        UObject* ClassDefaultObject;
+    };
 
     std::atomic_bool s_ProcessEventHooked = false;
     std::once_flag s_ProcessEventPatternMissingLogOnce;
     std::once_flag s_ProcessEventWaitingLogOnce;
     std::once_flag s_ProcessEventHookedLogOnce;
+    std::once_flag s_GObjectsMissingLogOnce;
+    std::once_flag s_GObjectsProbeLogOnce;
     ProcessEventFn o_ProcessEvent = nullptr;
     uintptr_t s_ProcessEventAddress = 0;
     uintptr_t s_HookedVtable = 0;
     size_t s_HookedSlot = static_cast<size_t>(-1);
+    constexpr size_t kProcessEventVtableIndex = 0x44;
+    std::atomic_uintptr_t s_LastLiveRpcChannel = 0;
+    std::atomic_uintptr_t s_AdminCommandFunction = 0;
+    std::atomic_uintptr_t s_BroadcastChatFunction = 0;
+    std::atomic_uintptr_t s_MiscStaticsClass = 0;
+    std::atomic_uintptr_t s_MiscStaticsDefaultObject = 0;
+    std::atomic_uintptr_t s_MiscStaticsAdminFunction = 0;
     std::mutex s_LogMutex;
-
-    constexpr int32_t kChatServerBroadcastNameIndex = 0x434E3;
-    constexpr int32_t kChatServerAdminNameIndex = 0x434F4;
+    constexpr uint64_t kClassCastFlagClass = 0x0000000000000020ULL;
+    constexpr uint64_t kClassCastFlagFunction = 0x0000000000080000ULL;
+    constexpr int32_t kNameIdxMiscStatics = 0xAF5C8;
+    constexpr int32_t kNameIdxPlayerRpcChannel = 0xB0541;
+    constexpr int32_t kNameIdxTestProcessAdminCommand = 0xAF682;
+    constexpr int32_t kNameIdxChatServerBroadcastChatMessage = 0x432B8;
+    constexpr int32_t kNameIdxChatServerProcessAdminCommand = 0x432C9;
 
     std::wstring GetModuleDirectory()
     {
@@ -193,6 +269,246 @@ namespace
         return !value.empty();
     }
 
+    std::string FNameToStringLocal(const FName& name)
+    {
+        using AppendStringFn = void(__fastcall*)(const FName*, FStringParam&);
+
+        static AppendStringFn appendString = nullptr;
+        if (!appendString)
+        {
+            const auto appendStringAddress = MemoryReader::FindFNameToString();
+            if (!appendStringAddress)
+                return {};
+
+            appendString = reinterpret_cast<AppendStringFn>(appendStringAddress);
+        }
+
+        wchar_t buffer[1024]{};
+        FStringParam temp{};
+        temp.Data = buffer;
+        temp.Count = 0;
+        temp.Max = static_cast<int32_t>(std::size(buffer));
+
+        appendString(&name, temp);
+
+        auto text = WideToUtf8(std::wstring(buffer));
+        const auto slash = text.rfind('/');
+        if (slash != std::string::npos)
+            text = text.substr(slash + 1);
+        return text;
+    }
+
+    std::string GetObjectNameLocal(const UObject* object)
+    {
+        if (!object)
+            return {};
+
+        return FNameToStringLocal(object->NamePrivate);
+    }
+
+    bool MatchesKnownNameIndex(const UObject* object, const char* objectName)
+    {
+        if (!object || !objectName)
+            return false;
+
+        const auto comparisonIndex = object->NamePrivate.ComparisonIndex;
+        if (strcmp(objectName, "MiscStatics") == 0)
+            return comparisonIndex == kNameIdxMiscStatics;
+        if (strcmp(objectName, "PlayerRpcChannel") == 0)
+            return comparisonIndex == kNameIdxPlayerRpcChannel;
+        if (strcmp(objectName, "Test_ProcessAdminCommand") == 0)
+            return comparisonIndex == kNameIdxTestProcessAdminCommand;
+        if (strcmp(objectName, "Chat_Server_BroadcastChatMessage") == 0)
+            return comparisonIndex == kNameIdxChatServerBroadcastChatMessage;
+        if (strcmp(objectName, "Chat_Server_ProcessAdminCommand") == 0)
+            return comparisonIndex == kNameIdxChatServerProcessAdminCommand;
+        return false;
+    }
+
+    bool HasTypeFlag(const UObject* object, uint64_t requiredFlag)
+    {
+        if (!object || !object->ClassPrivate)
+            return false;
+
+        const auto* klass = reinterpret_cast<const UClassRaw*>(object->ClassPrivate);
+        return (klass->CastFlags & requiredFlag) != 0;
+    }
+
+    bool ResolveObjectByName(const std::string& objectName, uint64_t requiredType, uintptr_t& objectPtr)
+    {
+        objectPtr = 0;
+
+        const auto gobjectsAddress = MemoryReader::FindGUObjectArray();
+        if (!gobjectsAddress)
+        {
+            std::call_once(s_GObjectsMissingLogOnce, []()
+            {
+                LogHookLine("ResolveObjectByName: GUObjectArray was not resolved for this SCUMServer build.");
+            });
+            return false;
+        }
+
+        TUObjectArrayMem objectArray{};
+        if (!MemoryReader::ReadMemory(gobjectsAddress + kFUObjectArrayObjObjectsOffset, &objectArray, sizeof(objectArray)))
+            return false;
+
+        std::call_once(s_GObjectsProbeLogOnce, [&]()
+        {
+            std::ostringstream ss;
+            ss << "GUObjectArray probe: addr=0x" << std::hex << gobjectsAddress
+               << " objObjects=0x" << (gobjectsAddress + kFUObjectArrayObjObjectsOffset)
+               << " objects=0x" << objectArray.Objects
+               << " maxElements=" << std::dec << objectArray.MaxElements
+               << " numElements=" << objectArray.NumElements
+               << " maxChunks=" << objectArray.MaxChunks
+               << " numChunks=" << objectArray.NumChunks;
+            LogHookLine(ss.str());
+        });
+
+        if (!objectArray.Objects || objectArray.NumElements <= 0 || objectArray.NumChunks <= 0)
+            return false;
+
+        constexpr int32_t elementsPerChunk = 0x10000;
+        for (int32_t chunkIndex = 0; chunkIndex < objectArray.NumChunks; ++chunkIndex)
+        {
+            uintptr_t chunkPtr = 0;
+            if (!ReadPointer(objectArray.Objects + (static_cast<uintptr_t>(chunkIndex) * sizeof(uintptr_t)), chunkPtr) || !chunkPtr)
+                continue;
+
+            const int32_t chunkBaseIndex = chunkIndex * elementsPerChunk;
+            const int32_t chunkRemaining = objectArray.NumElements - chunkBaseIndex;
+            if (chunkRemaining <= 0)
+                break;
+
+            const int32_t chunkCount = (chunkRemaining < elementsPerChunk) ? chunkRemaining : elementsPerChunk;
+            for (int32_t inChunkIndex = 0; inChunkIndex < chunkCount; ++inChunkIndex)
+            {
+                FUObjectItemMem item{};
+                const uintptr_t itemAddress = chunkPtr + (static_cast<uintptr_t>(inChunkIndex) * sizeof(FUObjectItemMem));
+                if (!MemoryReader::ReadMemory(itemAddress, &item, sizeof(item)) || !item.Object)
+                    continue;
+
+                const auto* object = reinterpret_cast<const UObject*>(item.Object);
+                if (requiredType && !HasTypeFlag(object, requiredType))
+                    continue;
+
+                if (!MatchesKnownNameIndex(object, objectName.c_str()) && GetObjectNameLocal(object) != objectName)
+                    continue;
+
+                objectPtr = item.Object;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool ResolveFunctionByGlobalScan(const char* ownerClassName, const char* funcName, uintptr_t& functionPtr)
+    {
+        functionPtr = 0;
+
+        const auto gobjectsAddress = MemoryReader::FindGUObjectArray();
+        if (!gobjectsAddress)
+            return false;
+
+        TUObjectArrayMem objectArray{};
+        if (!MemoryReader::ReadMemory(gobjectsAddress + kFUObjectArrayObjObjectsOffset, &objectArray, sizeof(objectArray)))
+            return false;
+
+        if (!objectArray.Objects || objectArray.NumElements <= 0 || objectArray.NumChunks <= 0)
+            return false;
+
+        constexpr int32_t elementsPerChunk = 0x10000;
+        for (int32_t chunkIndex = 0; chunkIndex < objectArray.NumChunks; ++chunkIndex)
+        {
+            uintptr_t chunkPtr = 0;
+            if (!ReadPointer(objectArray.Objects + (static_cast<uintptr_t>(chunkIndex) * sizeof(uintptr_t)), chunkPtr) || !chunkPtr)
+                continue;
+
+            const int32_t chunkBaseIndex = chunkIndex * elementsPerChunk;
+            const int32_t chunkRemaining = objectArray.NumElements - chunkBaseIndex;
+            if (chunkRemaining <= 0)
+                break;
+
+            const int32_t chunkCount = (chunkRemaining < elementsPerChunk) ? chunkRemaining : elementsPerChunk;
+            for (int32_t inChunkIndex = 0; inChunkIndex < chunkCount; ++inChunkIndex)
+            {
+                FUObjectItemMem item{};
+                const uintptr_t itemAddress = chunkPtr + (static_cast<uintptr_t>(inChunkIndex) * sizeof(FUObjectItemMem));
+                if (!MemoryReader::ReadMemory(itemAddress, &item, sizeof(item)) || !item.Object)
+                    continue;
+
+                const auto* object = reinterpret_cast<const UObject*>(item.Object);
+                if (!MatchesKnownNameIndex(object, funcName) && GetObjectNameLocal(object) != funcName)
+                    continue;
+
+                const auto* outer = reinterpret_cast<const UObject*>(object->OuterPrivate);
+                if (!outer)
+                    continue;
+
+                if (!MatchesKnownNameIndex(outer, ownerClassName) && GetObjectNameLocal(outer) != ownerClassName)
+                    continue;
+
+                functionPtr = item.Object;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    uintptr_t ResolveFunctionFromClass(UObject* ownerObject, const char* className, const char* funcName)
+    {
+        if (!ownerObject || !ownerObject->ClassPrivate || !className || !funcName)
+            return 0;
+
+        for (auto* current = reinterpret_cast<UStructRaw*>(ownerObject->ClassPrivate); current; current = current->SuperStruct)
+        {
+            const auto* currentObject = reinterpret_cast<UObject*>(current);
+            if (!MatchesKnownNameIndex(currentObject, className) && GetObjectNameLocal(currentObject) != className)
+                continue;
+
+            for (auto* field = current->Children; field; field = field->Next)
+            {
+                const auto* fieldObject = reinterpret_cast<UObject*>(field);
+                if (MatchesKnownNameIndex(fieldObject, funcName) || GetObjectNameLocal(fieldObject) == funcName)
+                    return reinterpret_cast<uintptr_t>(fieldObject);
+            }
+        }
+
+        uintptr_t globalFunction = 0;
+        if (ResolveFunctionByGlobalScan(className, funcName, globalFunction))
+            return globalFunction;
+
+        return 0;
+    }
+
+    bool IsNamedFunction(UObject* function, const char* ownerClassName, const char* functionName)
+    {
+        if (!function || !ownerClassName || !functionName)
+            return false;
+
+        if (!MatchesKnownNameIndex(function, functionName) && GetObjectNameLocal(function) != functionName)
+            return false;
+
+        const auto* outer = reinterpret_cast<const UObject*>(function->OuterPrivate);
+        if (!outer)
+            return false;
+
+        return MatchesKnownNameIndex(outer, ownerClassName) || GetObjectNameLocal(outer) == ownerClassName;
+    }
+
+    bool ResolveWorldObject(uintptr_t& worldObject)
+    {
+        worldObject = 0;
+
+        const auto gworldPtrAddress = MemoryReader::FindGWorld();
+        if (!gworldPtrAddress)
+            return false;
+
+        return ReadPointer(gworldPtrAddress, worldObject) && worldObject;
+    }
+
     uintptr_t ResolveControllerFromRpcChannel(uintptr_t rpcChannel)
     {
         uintptr_t outer = 0;
@@ -294,6 +610,215 @@ namespace
         return BuildChatContextFromController(controller, ctx);
     }
 
+    bool ResolveFirstLiveRpcChannel(uintptr_t& rpcChannel)
+    {
+        rpcChannel = 0;
+
+        const auto gworldPtrAddress = MemoryReader::FindGWorld();
+        if (!gworldPtrAddress)
+            return false;
+
+        uintptr_t world = 0;
+        if (!ReadPointer(gworldPtrAddress, world) || !world)
+            return false;
+
+        uintptr_t gameState = 0;
+        if (!ReadPointer(world + kUWorldGameStateOffset, gameState) || !gameState)
+            return false;
+
+        TArrayHeader playerArray{};
+        if (!MemoryReader::ReadMemory(gameState + kGameStatePlayerArrayOffset, &playerArray, sizeof(playerArray)))
+            return false;
+
+        if (playerArray.Count <= 0 || playerArray.Count > 256 || playerArray.Data == 0)
+            return false;
+
+        for (int32_t i = 0; i < playerArray.Count; ++i)
+        {
+            uintptr_t playerState = 0;
+            if (!ReadPointer(playerArray.Data + (static_cast<uintptr_t>(i) * sizeof(uintptr_t)), playerState) || !playerState)
+                continue;
+
+            uintptr_t pawn = 0;
+            if (!ReadPointer(playerState + kPlayerStatePawnPrivateOffset, pawn) || !pawn)
+                continue;
+
+            uintptr_t controller = 0;
+            if (!ReadPointer(pawn + kPawnControllerOffset, controller) || !controller)
+                continue;
+
+            uintptr_t candidateRpc = 0;
+            if (ReadPointer(controller + kControllerRpcChannelOffset, candidateRpc) && candidateRpc)
+            {
+                rpcChannel = candidateRpc;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    std::wstring Utf8ToWideLocal(const std::string& input)
+    {
+        if (input.empty())
+            return {};
+
+        const auto len = MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, nullptr, 0);
+        if (len <= 1)
+            return {};
+
+        std::wstring output(static_cast<size_t>(len), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, output.data(), len);
+        if (!output.empty() && output.back() == L'\0')
+            output.pop_back();
+        return output;
+    }
+
+    bool GetProcessEventInvoker(uintptr_t objectPtr, ProcessEventFn& invoker)
+    {
+        invoker = o_ProcessEvent;
+        if (invoker)
+            return true;
+
+        uintptr_t vtable = 0;
+        if (!ReadPointer(objectPtr, vtable) || !vtable)
+            return false;
+
+        uintptr_t slotValue = 0;
+        if (!ReadPointer(vtable + (kProcessEventVtableIndex * sizeof(uintptr_t)), slotValue) || !slotValue)
+            return false;
+
+        invoker = reinterpret_cast<ProcessEventFn>(slotValue);
+        return true;
+    }
+
+    bool TryExecuteAdminCommandInternal(const std::string& rawCommand)
+    {
+        auto command = rawCommand;
+        while (!command.empty() && std::isspace(static_cast<unsigned char>(command.front())))
+            command.erase(command.begin());
+        while (!command.empty() && std::isspace(static_cast<unsigned char>(command.back())))
+            command.pop_back();
+        while (!command.empty() && command.front() == '#')
+            command.erase(command.begin());
+
+        if (command.empty())
+            return false;
+
+        auto wideCommand = Utf8ToWideLocal(command);
+        if (wideCommand.empty())
+            return false;
+
+        std::vector<wchar_t> chars(wideCommand.begin(), wideCommand.end());
+        chars.push_back(L'\0');
+
+        AdminCommandParams params{};
+        params.commandText.Data = chars.data();
+        params.commandText.Count = static_cast<int32_t>(chars.size());
+        params.commandText.Max = static_cast<int32_t>(chars.size());
+
+        auto miscFunctionPtr = s_MiscStaticsAdminFunction.load();
+        auto miscClassPtr = s_MiscStaticsClass.load();
+        auto miscDefaultObjectPtr = s_MiscStaticsDefaultObject.load();
+
+        if (!miscClassPtr)
+        {
+            ResolveObjectByName("MiscStatics", kClassCastFlagClass, miscClassPtr);
+            if (miscClassPtr)
+            {
+                s_MiscStaticsClass = miscClassPtr;
+                const auto* klass = reinterpret_cast<const UClassRaw*>(miscClassPtr);
+                miscDefaultObjectPtr = reinterpret_cast<uintptr_t>(klass->ClassDefaultObject);
+                if (miscDefaultObjectPtr)
+                    s_MiscStaticsDefaultObject = miscDefaultObjectPtr;
+            }
+        }
+
+        if (!miscFunctionPtr && miscClassPtr)
+        {
+            miscFunctionPtr = ResolveFunctionFromClass(reinterpret_cast<UObject*>(miscClassPtr), "MiscStatics", "Test_ProcessAdminCommand");
+            if (miscFunctionPtr)
+                s_MiscStaticsAdminFunction = miscFunctionPtr;
+        }
+
+        const auto miscInvokeTarget = miscDefaultObjectPtr ? miscDefaultObjectPtr : miscClassPtr;
+
+        if (!miscClassPtr || !miscFunctionPtr)
+        {
+            std::ostringstream ss;
+            ss << "Static admin path unresolved: class=0x" << std::hex << miscClassPtr
+               << " target=0x" << miscInvokeTarget
+               << " fn=0x" << miscFunctionPtr;
+            LogHookLine(ss.str());
+        }
+
+        uintptr_t worldObject = 0;
+        if (miscInvokeTarget && miscFunctionPtr && ResolveWorldObject(worldObject))
+        {
+            ProcessEventFn processEvent = nullptr;
+            if (GetProcessEventInvoker(miscInvokeTarget, processEvent) && processEvent)
+            {
+                StaticAdminCommandParams staticParams{};
+                staticParams.WorldContextObject = reinterpret_cast<UObject*>(worldObject);
+                staticParams.commandText = params.commandText;
+
+                processEvent(
+                    reinterpret_cast<UObject*>(miscInvokeTarget),
+                    reinterpret_cast<UObject*>(miscFunctionPtr),
+                    &staticParams);
+
+                std::ostringstream ss;
+                ss << "CMD(process-event/static) -> " << command
+                   << " world=0x" << std::hex << worldObject
+                   << " target=0x" << miscInvokeTarget
+                   << " fn=0x" << miscFunctionPtr;
+                LogHookLine(ss.str());
+                return true;
+            }
+        }
+
+        auto rpcChannel = s_LastLiveRpcChannel.load();
+        if (!rpcChannel && !ResolveFirstLiveRpcChannel(rpcChannel))
+        {
+            LogHookLine("Direct admin command skipped: no live UPlayerRpcChannel and static admin path unavailable.");
+            return false;
+        }
+
+        auto functionPtr = s_AdminCommandFunction.load();
+        if (!functionPtr)
+        {
+            functionPtr = ResolveFunctionFromClass(reinterpret_cast<UObject*>(rpcChannel), "PlayerRpcChannel", "Chat_Server_ProcessAdminCommand");
+            if (functionPtr)
+            {
+                s_AdminCommandFunction = functionPtr;
+            }
+            else
+            {
+                LogHookLine("Direct admin command skipped: Chat_Server_ProcessAdminCommand UFunction unavailable.");
+                return false;
+            }
+        }
+
+        ProcessEventFn processEvent = nullptr;
+        if (!GetProcessEventInvoker(rpcChannel, processEvent) || !processEvent)
+        {
+            LogHookLine("Direct admin command skipped: ProcessEvent invoker unavailable.");
+            return false;
+        }
+
+        processEvent(
+            reinterpret_cast<UObject*>(rpcChannel),
+            reinterpret_cast<UObject*>(functionPtr),
+            &params);
+
+        std::ostringstream ss;
+        ss << "CMD(process-event/rpc) -> " << command
+           << " rpc=0x" << std::hex << rpcChannel
+           << " fn=0x" << functionPtr;
+        LogHookLine(ss.str());
+        return true;
+    }
+
     std::string BuildChatJson(const NativeChatContext& ctx, const std::string& message, int chatType)
     {
         std::ostringstream ss;
@@ -314,16 +839,15 @@ namespace
         if (!object || !function || !params)
             return;
 
-        FName functionName{};
-        if (!MemoryReader::ReadMemory(reinterpret_cast<uintptr_t>(function) + offsetof(UObject, NamePrivate), &functionName, sizeof(functionName)))
-            return;
-
         std::string message;
         int32_t chatType = 0;
         bool isChatEvent = false;
 
-        if (functionName.ComparisonIndex == kChatServerBroadcastNameIndex)
+        if (s_BroadcastChatFunction.load() == reinterpret_cast<uintptr_t>(function)
+            || IsNamedFunction(function, "PlayerRpcChannel", "Chat_Server_BroadcastChatMessage"))
         {
+            s_BroadcastChatFunction = reinterpret_cast<uintptr_t>(function);
+            s_LastLiveRpcChannel = reinterpret_cast<uintptr_t>(object);
             if (!ReadFStringUtf8(reinterpret_cast<uintptr_t>(params), message))
                 return;
 
@@ -332,8 +856,11 @@ namespace
             chatType = static_cast<int32_t>(rawChannel);
             isChatEvent = true;
         }
-        else if (functionName.ComparisonIndex == kChatServerAdminNameIndex)
+        else if (s_AdminCommandFunction.load() == reinterpret_cast<uintptr_t>(function)
+            || IsNamedFunction(function, "PlayerRpcChannel", "Chat_Server_ProcessAdminCommand"))
         {
+            s_AdminCommandFunction = reinterpret_cast<uintptr_t>(function);
+            s_LastLiveRpcChannel = reinterpret_cast<uintptr_t>(object);
             if (!ReadFStringUtf8(reinterpret_cast<uintptr_t>(params), message))
                 return;
 
@@ -639,35 +1166,32 @@ bool HookManager::HookProcessEvent() {
     if (!ReadPointer(rpcChannel, vtable) || !vtable)
         return false;
 
-    size_t slot = static_cast<size_t>(-1);
-    for (size_t i = 0; i < 256; ++i)
-    {
-        uintptr_t candidate = 0;
-        if (!ReadPointer(vtable + (i * sizeof(uintptr_t)), candidate))
-            continue;
-
-        if (candidate == s_ProcessEventAddress)
-        {
-            slot = i;
-            break;
-        }
-    }
-
-    if (slot == static_cast<size_t>(-1))
-    {
-        LogHookLine("ProcessEvent address not found inside UPlayerRpcChannel vtable.");
-        return false;
-    }
+    const auto slot = kProcessEventVtableIndex;
 
     DWORD oldProtect = 0;
     auto* slotPtr = reinterpret_cast<uintptr_t*>(vtable + (slot * sizeof(uintptr_t)));
+    uintptr_t slotValue = 0;
+    if (!ReadPointer(reinterpret_cast<uintptr_t>(slotPtr), slotValue) || !slotValue)
+    {
+        LogHookLine("ProcessEvent vtable slot is empty/unreadable.");
+        return false;
+    }
+
+    if (slotValue == reinterpret_cast<uintptr_t>(&hk_ProcessEvent))
+    {
+        s_HookedVtable = vtable;
+        s_HookedSlot = slot;
+        s_ProcessEventHooked = true;
+        return true;
+    }
+
     if (!VirtualProtect(slotPtr, sizeof(uintptr_t), PAGE_EXECUTE_READWRITE, &oldProtect))
     {
         LogHookLine("VirtualProtect failed while patching UPlayerRpcChannel vtable.");
         return false;
     }
 
-    o_ProcessEvent = reinterpret_cast<ProcessEventFn>(*slotPtr);
+    o_ProcessEvent = reinterpret_cast<ProcessEventFn>(slotValue);
     *slotPtr = reinterpret_cast<uintptr_t>(&hk_ProcessEvent);
     VirtualProtect(slotPtr, sizeof(uintptr_t), oldProtect, &oldProtect);
 
@@ -685,6 +1209,14 @@ bool HookManager::HookProcessEvent() {
     });
 
     return true;
+}
+
+bool HookManager::ExecuteAdminCommandDirect(const char* commandText)
+{
+    if (!commandText || !commandText[0])
+        return false;
+
+    return TryExecuteAdminCommandInternal(commandText);
 }
 
 } // namespace ScumOxygen

@@ -127,12 +127,16 @@ public sealed class OxygenRuntime
         _timers.Every(TimeSpan.FromSeconds(1), PollCommands);
         _nativeBridge = new NativeBridgeService(_log, _players, this);
         _nativeBridge.Start();
+        if (!_nativeBridge.WaitUntilConnected(TimeSpan.FromSeconds(5)))
+        {
+            _log.Warn("[NativeBridge] Pipe not connected within startup window; continuing with deferred bridge.");
+        }
         _commandsSvc.SetNativeCommandSender(command => _nativeBridge?.TrySendServerCommand(command) == true);
-        _eventPump = new ServerEventPump(_log, _timers, _commandsSvc, _players, this);
-        _eventPump.Start();
         ResolveServerIdentity();
         LoadAll();
         StartWatcher();
+        _eventPump = new ServerEventPump(_log, _timers, _commandsSvc, _players, this);
+        _eventPump.Start();
     }
 
     public object GetServerIdentity()

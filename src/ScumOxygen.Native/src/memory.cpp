@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <psapi.h>
 #include <vector>
+#include <array>
 
 namespace ScumOxygen {
 
@@ -99,6 +100,49 @@ struct FMemoryImageResult {
     bool found;
 };
 
+namespace
+{
+    constexpr uintptr_t kFUObjectArrayObjObjectsOffset = 0x10;
+
+    struct TUObjectArrayProbe
+    {
+        uintptr_t Objects;
+        uint8_t Pad8[0x8];
+        int32_t MaxElements;
+        int32_t NumElements;
+        int32_t MaxChunks;
+        int32_t NumChunks;
+    };
+
+    bool IsProbablyGUObjectArray(uintptr_t address)
+    {
+        if (!address)
+            return false;
+
+        TUObjectArrayProbe probe{};
+        if (!MemoryReader::ReadMemory(address + kFUObjectArrayObjObjectsOffset, &probe, sizeof(probe)))
+            return false;
+
+        if (!probe.Objects)
+            return false;
+
+        if (probe.NumElements <= 0 || probe.NumElements > probe.MaxElements || probe.MaxElements <= 0)
+            return false;
+
+        if (probe.NumChunks <= 0 || probe.NumChunks > probe.MaxChunks || probe.MaxChunks <= 0)
+            return false;
+
+        if (probe.NumChunks > 0x2000 || probe.MaxChunks > 0x2000)
+            return false;
+
+        uintptr_t firstChunk = 0;
+        if (!MemoryReader::ReadMemory(probe.Objects, &firstChunk, sizeof(firstChunk)))
+            return false;
+
+        return firstChunk != 0;
+    }
+}
+
 uintptr_t MemoryReader::FindGWorld() {
     const uintptr_t moduleBase = GetModuleBase(nullptr);
     if (!moduleBase) {
@@ -140,6 +184,52 @@ uintptr_t MemoryReader::FindGWorld() {
     // which resolves to RVA 0x0719F8B0.
     return moduleBase + 0x0719F8B0;
 
+}
+
+uintptr_t MemoryReader::FindGUObjectArray() {
+    const uintptr_t moduleBase = GetModuleBase(nullptr);
+    if (!moduleBase) {
+        return 0;
+    }
+
+    // Fresh dedicated-server fallback derived from a live UE4SS dump on the
+    // current SCUMServer build (2026-03-18).
+    static constexpr uintptr_t kDedicatedServerGObjectsRva = 0x070687D0;
+    static constexpr uintptr_t kLegacyClientGObjectsRva = 0x0767D190;
+
+    const std::array<uintptr_t, 2> candidates = {
+        moduleBase + kDedicatedServerGObjectsRva,
+        moduleBase + kLegacyClientGObjectsRva
+    };
+
+    for (const auto candidate : candidates) {
+        if (IsProbablyGUObjectArray(candidate)) {
+            return candidate;
+        }
+    }
+
+    // If validation is too strict for a specific build, prefer the fresh
+    // dedicated-server fallback we confirmed with a live UE4SS dump rather than
+    // falling back to an older client RVA or returning nothing.
+    return moduleBase + kDedicatedServerGObjectsRva;
+}
+
+uintptr_t MemoryReader::FindFNameToString() {
+    const uintptr_t moduleBase = GetModuleBase(nullptr);
+    if (!moduleBase) {
+        return 0;
+    }
+
+    // Fresh dedicated-server fallback derived from a live UE4SS dump on the
+    // current SCUMServer build (2026-03-18).
+    static constexpr uintptr_t kDedicatedServerFNameToStringRva = 0x02762050;
+    static constexpr uintptr_t kLegacyClientFNameToStringRva = 0x02839130;
+
+    if (moduleBase + kDedicatedServerFNameToStringRva) {
+        return moduleBase + kDedicatedServerFNameToStringRva;
+    }
+
+    return moduleBase + kLegacyClientFNameToStringRva;
 }
 
 } // namespace ScumOxygen

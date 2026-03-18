@@ -34,6 +34,31 @@ public sealed class NativeBridgeService
         _loopTask = Task.Run(() => RunLoop(_cts.Token));
     }
 
+    public bool IsConnected
+    {
+        get
+        {
+            lock (_pipeLock)
+            {
+                return _pipe != null && _pipe.IsConnected;
+            }
+        }
+    }
+
+    public bool WaitUntilConnected(TimeSpan timeout)
+    {
+        var until = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < until)
+        {
+            if (IsConnected)
+                return true;
+
+            Thread.Sleep(100);
+        }
+
+        return IsConnected;
+    }
+
     public void Stop()
     {
         var cts = _cts;

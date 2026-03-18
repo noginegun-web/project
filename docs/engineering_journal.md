@@ -163,3 +163,33 @@ Rule:
 - For SCUM dedicated process hooks, prefer hooking a concrete live class/vtable over patching the global UObject ProcessEvent blindly.
 - Treat log parsing as fallback only; when a native live event exists, dedupe it before plugin dispatch.
 - Any hosted package must keep both runtime roots (`NeDjin` and `ScumOxygen`) byte-equivalent until the compatibility root can be removed completely.
+
+### 2026-03-18 - Fresh dedicated UE4SS dump and real GUObjectArray layout
+
+What worked:
+- A fresh UE4SS dump was generated directly from the current `SCUMServer.exe`, not from the older client dump.
+- The live dedicated build confirmed:
+  - `GUObjectArray = MainExe + 0x070687D0`
+  - `FName::ToString = MainExe + 0x02762050`
+  - `MiscStatics`, `PlayerRpcChannel`, `Test_ProcessAdminCommand`, `Chat_Server_BroadcastChatMessage`, and `Chat_Server_ProcessAdminCommand` all exist on the dedicated server.
+- The real object-array layout was identified correctly:
+  - `GUObjectArray` is an outer `FUObjectArray`
+  - `ObjObjects` starts at `GUObjectArray + 0x10`
+- After switching object scanning to `FUObjectArray + 0x10` and waiting for the server to reach steady-state, plugin commands started executing through:
+  - `CMD(process-event/static) -> ...`
+- Local validation succeeded for:
+  - `/hello`
+  - `/sethome base`
+  - `/homes`
+  - `/travel`
+  through `POST /api/plugin-command` without needing the old console-only path.
+
+What did not work:
+- Reading `GUObjectArray` as a raw `TUObjectArray` produced garbage values and completely hid `MiscStatics`.
+- Using the old client `FName::ToString` RVA broke object-name reconstruction on the dedicated server.
+- The static admin path is not reliably available during the early startup window; some startup-time plugin actions still fall back to console before the function graph is fully ready.
+
+Rule:
+- Never trust a client dump for dedicated-server hooks when the server binary has been updated later.
+- On SCUM dedicated UE4.27, treat `GUObjectArray` as `FUObjectArray`, and read `ObjObjects` from `+0x10`.
+- Always validate native hook assumptions with a fresh runtime dump and then retest after the server reaches a warm steady-state, not only during the first seconds after boot.

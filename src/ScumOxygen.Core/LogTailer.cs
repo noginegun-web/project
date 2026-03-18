@@ -29,8 +29,11 @@ public sealed class LogTailer
 
         if (!string.Equals(_currentFile, file, StringComparison.OrdinalIgnoreCase))
         {
+            var isFirstAttach = !_initialized;
             _currentFile = file;
-            _position = _initialized && File.Exists(file) ? new FileInfo(file).Length : 0;
+            _position = File.Exists(file)
+                ? (isFirstAttach ? new FileInfo(file).Length : 0)
+                : 0;
             _initialized = true;
         }
 

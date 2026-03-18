@@ -11,6 +11,7 @@ public sealed class CommandService
 {
     private readonly Logger _log;
     private readonly CommandConfig _cfg;
+    private readonly HostedPanelCommandSender? _hostPanel;
     private RconClientLite? _rcon;
     private readonly ConsoleCommandSender _console;
     private readonly string _fileQueuePath;
@@ -20,6 +21,16 @@ public sealed class CommandService
     {
         _log = log;
         _cfg = CommandConfig.Load(Path.Combine(OxygenPaths.ConfigsDir, "rcon.json"));
+        var hostedConfig = HostedPanelCommandConfig.Load(Path.Combine(OxygenPaths.ConfigsDir, "panel_transport.json"));
+        if (hostedConfig.Enabled)
+        {
+            _hostPanel = new HostedPanelCommandSender(log, hostedConfig);
+            _log.Info($"[CommandService] Hosted panel transport enabled: base='{hostedConfig.PanelBaseUrl}', serverId='{hostedConfig.ServerId}', prefer={hostedConfig.PreferPanelTransport}");
+        }
+        else
+        {
+            _log.Info("[CommandService] Hosted panel transport disabled.");
+        }
         if (_cfg.Enabled)
         {
             _rcon = new RconClientLite(_cfg.Host, _cfg.Port, _cfg.Password, _log);
@@ -45,13 +56,27 @@ public sealed class CommandService
     public async Task<CommandResult> ExecuteAsync(string command, CancellationToken ct = default)
     {
         command = NormalizeServerCommand(command);
+        if (string.IsNullOrWhiteSpace(command))
+            return CommandResult.Fail("empty command", TimeSpan.Zero);
+
+        if (_nativeCommandSender?.Invoke(command) == true)
+        {
+            _log.Info($"[CommandService] native-pipe -> {command}");
+            return CommandResult.Ok("native-pipe", TimeSpan.Zero);
+        }
 
         if (!_cfg.Enabled || _rcon == null)
         {
-            if (_nativeCommandSender?.Invoke(command) == true)
+            if (_hostPanel != null)
             {
-                _log.Info($"[CommandService] native-pipe -> {command}");
-                return CommandResult.Ok("native-pipe", TimeSpan.Zero);
+                var hostedResult = await _hostPanel.ExecuteAsync(command, ct);
+                if (hostedResult.Success)
+                {
+                    _log.Info($"[CommandService] hosted-panel -> {command}");
+                    return hostedResult;
+                }
+
+                _log.Warn($"[CommandService] hosted-panel failed, falling back: {hostedResult.Response}");
             }
             if (_cfg.AllowConsoleFallback && _console.TrySend(command))
             {
@@ -79,6 +104,15 @@ public sealed class CommandService
                 _log.Info($"[CommandService] native-pipe fallback -> {command}");
                 return CommandResult.Ok("native-pipe", TimeSpan.Zero);
             }
+            if (_hostPanel != null)
+            {
+                var hostedResult = await _hostPanel.ExecuteAsync(command, ct);
+                if (hostedResult.Success)
+                {
+                    _log.Info($"[CommandService] hosted-panel fallback -> {command}");
+                    return hostedResult;
+                }
+            }
             if (_cfg.AllowConsoleFallback && _console.TrySend(command))
             {
                 _log.Info($"[CommandService] console fallback -> {command}");
@@ -99,8 +133,7 @@ public sealed class CommandService
         if (string.IsNullOrWhiteSpace(trimmed))
             return string.Empty;
 
-        if (trimmed.StartsWith("#", StringComparison.Ordinal))
-            return trimmed;
+        trimmed = trimmed.TrimStart('#').TrimStart();
 
         var split = trimmed.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
         var verb = split[0];
@@ -114,9 +147,15 @@ public sealed class CommandService
                 ? "#Announce"
                 : $"#Announce {rest}";
         }
+        else if (ShouldPrefixAdminHash(verb))
+        {
+            normalized = string.IsNullOrWhiteSpace(rest)
+                ? $"#{verb}"
+                : $"#{verb} {rest}";
+        }
         else
         {
-            normalized = "#" + trimmed;
+            normalized = trimmed;
         }
 
         if (!string.Equals(normalized, trimmed, StringComparison.Ordinal))
@@ -125,6 +164,21 @@ public sealed class CommandService
         }
 
         return normalized;
+    }
+
+    private static bool ShouldPrefixAdminHash(string verb)
+    {
+        return verb.Equals("sendnotification", StringComparison.OrdinalIgnoreCase) ||
+               verb.Equals("teleport", StringComparison.OrdinalIgnoreCase) ||
+               verb.Equals("kick", StringComparison.OrdinalIgnoreCase) ||
+               verb.Equals("ban", StringComparison.OrdinalIgnoreCase) ||
+               verb.Equals("listplayers", StringComparison.OrdinalIgnoreCase) ||
+               verb.Equals("settimespeed", StringComparison.OrdinalIgnoreCase) ||
+               verb.Equals("setweather", StringComparison.OrdinalIgnoreCase) ||
+               verb.Equals("settime", StringComparison.OrdinalIgnoreCase) ||
+               verb.Equals("spawnitem", StringComparison.OrdinalIgnoreCase) ||
+               verb.Equals("spawnvehicle", StringComparison.OrdinalIgnoreCase) ||
+               verb.Equals("location", StringComparison.OrdinalIgnoreCase);
     }
 
     private bool EnqueueFileCommand(string command)
