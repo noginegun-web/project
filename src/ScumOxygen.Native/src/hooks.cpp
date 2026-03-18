@@ -92,6 +92,23 @@ namespace
         FStringParam commandText;
     };
 
+    struct MiscBroadcastChatParams
+    {
+        UObject* WorldContextObject;
+        FStringParam text;
+        uint8_t chatType;
+        uint8_t Pad11[0x7]{};
+    };
+
+    struct MiscSendChatLineParams
+    {
+        UObject* PlayerController;
+        FStringParam text;
+        uint8_t chatType;
+        bool shouldCopyToClientClipboard;
+        uint8_t Pad12[0x6]{};
+    };
+
     struct UFieldRaw
     {
         UObject Object;
@@ -136,14 +153,29 @@ namespace
     std::atomic_uintptr_t s_MiscStaticsClass = 0;
     std::atomic_uintptr_t s_MiscStaticsDefaultObject = 0;
     std::atomic_uintptr_t s_MiscStaticsAdminFunction = 0;
+    std::atomic_uintptr_t s_MiscStaticsSendChatLineFunction = 0;
+    std::atomic_uintptr_t s_MiscStaticsBroadcastChatLineFunction = 0;
     std::mutex s_LogMutex;
     constexpr uint64_t kClassCastFlagClass = 0x0000000000000020ULL;
     constexpr uint64_t kClassCastFlagFunction = 0x0000000000080000ULL;
     constexpr int32_t kNameIdxMiscStatics = 0xAF5C8;
     constexpr int32_t kNameIdxPlayerRpcChannel = 0xB0541;
+    constexpr int32_t kNameIdxBroadcastChatLine = 0xAF5CF;
+    constexpr int32_t kNameIdxSendChatLineToPlayer = 0xAF667;
     constexpr int32_t kNameIdxTestProcessAdminCommand = 0xAF682;
     constexpr int32_t kNameIdxChatServerBroadcastChatMessage = 0x432B8;
     constexpr int32_t kNameIdxChatServerProcessAdminCommand = 0x432C9;
+    constexpr uint8_t kChatTypeDefault = 0;
+    constexpr uint8_t kChatTypeGlobal = 2;
+    constexpr uint8_t kChatTypeAdmin = 4;
+    constexpr uint8_t kChatTypeServerMessage = 6;
+    constexpr uint8_t kChatTypeError = 7;
+
+    bool BuildChatContextFromRpcChannel(uintptr_t rpcChannel, NativeChatContext& ctx);
+    bool GetProcessEventInvoker(uintptr_t objectPtr, ProcessEventFn& invoker);
+    bool ResolveWorldObject(uintptr_t& worldObject);
+    uintptr_t ResolveControllerFromRpcChannel(uintptr_t rpcChannel);
+    std::wstring Utf8ToWideLocal(const std::string& input);
 
     std::wstring GetModuleDirectory()
     {
@@ -295,6 +327,15 @@ namespace
         const auto slash = text.rfind('/');
         if (slash != std::string::npos)
             text = text.substr(slash + 1);
+        const auto colon = text.rfind(':');
+        if (colon != std::string::npos)
+            text = text.substr(colon + 1);
+        const auto dot = text.rfind('.');
+        if (dot != std::string::npos)
+            text = text.substr(dot + 1);
+        const auto space = text.rfind(' ');
+        if (space != std::string::npos)
+            text = text.substr(space + 1);
         return text;
     }
 
@@ -316,6 +357,10 @@ namespace
             return comparisonIndex == kNameIdxMiscStatics;
         if (strcmp(objectName, "PlayerRpcChannel") == 0)
             return comparisonIndex == kNameIdxPlayerRpcChannel;
+        if (strcmp(objectName, "BroadcastChatLine") == 0)
+            return comparisonIndex == kNameIdxBroadcastChatLine;
+        if (strcmp(objectName, "SendChatLineToPlayer") == 0)
+            return comparisonIndex == kNameIdxSendChatLineToPlayer;
         if (strcmp(objectName, "Test_ProcessAdminCommand") == 0)
             return comparisonIndex == kNameIdxTestProcessAdminCommand;
         if (strcmp(objectName, "Chat_Server_BroadcastChatMessage") == 0)
@@ -452,6 +497,456 @@ namespace
                 functionPtr = item.Object;
                 return true;
             }
+        }
+
+        return false;
+    }
+
+    bool ResolveFunctionByNameAnyOwner(const char* funcName, uintptr_t& functionPtr, uintptr_t& ownerPtr)
+    {
+        functionPtr = 0;
+        ownerPtr = 0;
+
+        const auto gobjectsAddress = MemoryReader::FindGUObjectArray();
+        if (!gobjectsAddress)
+            return false;
+
+        TUObjectArrayMem objectArray{};
+        if (!MemoryReader::ReadMemory(gobjectsAddress + kFUObjectArrayObjObjectsOffset, &objectArray, sizeof(objectArray)))
+            return false;
+
+        if (!objectArray.Objects || objectArray.NumElements <= 0 || objectArray.NumChunks <= 0)
+            return false;
+
+        constexpr int32_t elementsPerChunk = 0x10000;
+        for (int32_t chunkIndex = 0; chunkIndex < objectArray.NumChunks; ++chunkIndex)
+        {
+            uintptr_t chunkPtr = 0;
+            if (!ReadPointer(objectArray.Objects + (static_cast<uintptr_t>(chunkIndex) * sizeof(uintptr_t)), chunkPtr) || !chunkPtr)
+                continue;
+
+            const int32_t chunkBaseIndex = chunkIndex * elementsPerChunk;
+            const int32_t chunkRemaining = objectArray.NumElements - chunkBaseIndex;
+            if (chunkRemaining <= 0)
+                break;
+
+            const int32_t chunkCount = (chunkRemaining < elementsPerChunk) ? chunkRemaining : elementsPerChunk;
+            for (int32_t inChunkIndex = 0; inChunkIndex < chunkCount; ++inChunkIndex)
+            {
+                FUObjectItemMem item{};
+                const uintptr_t itemAddress = chunkPtr + (static_cast<uintptr_t>(inChunkIndex) * sizeof(FUObjectItemMem));
+                if (!MemoryReader::ReadMemory(itemAddress, &item, sizeof(item)) || !item.Object)
+                    continue;
+
+                const auto* object = reinterpret_cast<const UObject*>(item.Object);
+                if (!HasTypeFlag(object, kClassCastFlagFunction))
+                    continue;
+
+                if (!MatchesKnownNameIndex(object, funcName) && GetObjectNameLocal(object) != funcName)
+                    continue;
+
+                const auto* outer = reinterpret_cast<const UObject*>(object->OuterPrivate);
+                functionPtr = item.Object;
+                ownerPtr = reinterpret_cast<uintptr_t>(outer);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    std::string TrimCopy(std::string value)
+    {
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
+            value.erase(value.begin());
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+            value.pop_back();
+        return value;
+    }
+
+    bool LooksLikeRpcChannel(UObject* object)
+    {
+        if (!object)
+            return false;
+
+        NativeChatContext ctx{};
+        return BuildChatContextFromRpcChannel(reinterpret_cast<uintptr_t>(object), ctx);
+    }
+
+    bool IsLikelyChatPayload(UObject* object, void* params, std::string& message, uint8_t& rawChannel)
+    {
+        message.clear();
+        rawChannel = 0;
+
+        if (!object || !params)
+            return false;
+
+        if (!LooksLikeRpcChannel(object))
+            return false;
+
+        if (!ReadFStringUtf8(reinterpret_cast<uintptr_t>(params), message, 512))
+            return false;
+
+        message = TrimCopy(message);
+        if (message.empty() || message.size() > 400)
+            return false;
+
+        MemoryReader::ReadMemory(reinterpret_cast<uintptr_t>(params) + 0x10, &rawChannel, sizeof(rawChannel));
+        if (rawChannel > kChatTypeError)
+            rawChannel = kChatTypeDefault;
+
+        bool hasVisible = false;
+        for (char ch : message)
+        {
+            const auto uch = static_cast<unsigned char>(ch);
+            if (uch >= 0x20 && ch != '\r' && ch != '\n')
+            {
+                hasVisible = true;
+                break;
+            }
+        }
+
+        return hasVisible;
+    }
+
+    uintptr_t ResolveControllerByDatabaseId(int64_t databaseId)
+    {
+        if (databaseId <= 0)
+            return 0;
+
+        const auto gworldPtrAddress = MemoryReader::FindGWorld();
+        if (!gworldPtrAddress)
+            return 0;
+
+        uintptr_t world = 0;
+        if (!ReadPointer(gworldPtrAddress, world) || !world)
+            return 0;
+
+        uintptr_t gameState = 0;
+        if (!ReadPointer(world + kUWorldGameStateOffset, gameState) || !gameState)
+            return 0;
+
+        TArrayHeader playerArray{};
+        if (!MemoryReader::ReadMemory(gameState + kGameStatePlayerArrayOffset, &playerArray, sizeof(playerArray)))
+            return 0;
+
+        if (playerArray.Count <= 0 || playerArray.Count > 256 || playerArray.Data == 0)
+            return 0;
+
+        for (int32_t i = 0; i < playerArray.Count; ++i)
+        {
+            uintptr_t playerState = 0;
+            if (!ReadPointer(playerArray.Data + (static_cast<uintptr_t>(i) * sizeof(uintptr_t)), playerState) || !playerState)
+                continue;
+
+            uintptr_t pawn = 0;
+            if (!ReadPointer(playerState + kPlayerStatePawnPrivateOffset, pawn) || !pawn)
+                continue;
+
+            int64_t currentDatabaseId = 0;
+            if (!ReadInt64(pawn + kPrisonerServerUserProfileIdOffset, currentDatabaseId) || currentDatabaseId != databaseId)
+                continue;
+
+            uintptr_t controller = 0;
+            if (ReadPointer(pawn + kPawnControllerOffset, controller) && controller)
+                return controller;
+        }
+
+        return 0;
+    }
+
+    bool EnsureMiscStaticsBase(uintptr_t& invokeTarget)
+    {
+        invokeTarget = 0;
+
+        auto miscClassPtr = s_MiscStaticsClass.load();
+        auto miscDefaultObjectPtr = s_MiscStaticsDefaultObject.load();
+
+        if (!miscClassPtr)
+        {
+            ResolveObjectByName("MiscStatics", 0, miscClassPtr);
+            if (!miscClassPtr)
+            {
+                uintptr_t resolvedFn = 0;
+                uintptr_t ownerPtr = 0;
+                const char* fallbackNames[] = {
+                    "BroadcastChatLine",
+                    "SendChatLineToPlayer",
+                    "Test_ProcessAdminCommand"
+                };
+
+                for (const auto* fallbackName : fallbackNames)
+                {
+                    if (ResolveFunctionByNameAnyOwner(fallbackName, resolvedFn, ownerPtr) && ownerPtr)
+                    {
+                        miscClassPtr = ownerPtr;
+
+                        std::ostringstream ss;
+                        ss << "Resolved MiscStatics base via owner fallback. source=" << fallbackName
+                           << " owner=0x" << std::hex << ownerPtr
+                           << " fn=0x" << resolvedFn;
+                        LogHookLine(ss.str());
+                        break;
+                    }
+                }
+            }
+
+            if (miscClassPtr)
+            {
+                s_MiscStaticsClass = miscClassPtr;
+                const auto* klass = reinterpret_cast<const UClassRaw*>(miscClassPtr);
+                miscDefaultObjectPtr = reinterpret_cast<uintptr_t>(klass->ClassDefaultObject);
+                if (miscDefaultObjectPtr)
+                    s_MiscStaticsDefaultObject = miscDefaultObjectPtr;
+            }
+        }
+
+        invokeTarget = miscDefaultObjectPtr ? miscDefaultObjectPtr : miscClassPtr;
+        return invokeTarget != 0;
+    }
+
+    bool EnsureMiscStaticsFunction(const char* functionName, std::atomic_uintptr_t& cache, uintptr_t& functionPtr)
+    {
+        functionPtr = cache.load();
+        if (functionPtr)
+            return true;
+
+        uintptr_t resolved = 0;
+        if (!ResolveFunctionByGlobalScan("MiscStatics", functionName, resolved))
+        {
+            uintptr_t ownerPtr = 0;
+            if (!ResolveFunctionByNameAnyOwner(functionName, resolved, ownerPtr))
+                return false;
+
+            if (ownerPtr)
+            {
+                s_MiscStaticsClass = ownerPtr;
+                const auto* klass = reinterpret_cast<const UClassRaw*>(ownerPtr);
+                const auto cdo = reinterpret_cast<uintptr_t>(klass->ClassDefaultObject);
+                if (cdo)
+                    s_MiscStaticsDefaultObject = cdo;
+            }
+
+            std::ostringstream ss;
+            ss << "Resolved MiscStatics fallback by function name. fn=" << functionName
+               << " owner=0x" << std::hex << ownerPtr
+               << " resolved=0x" << resolved;
+            LogHookLine(ss.str());
+        }
+
+        cache = resolved;
+        functionPtr = resolved;
+        return true;
+    }
+
+    bool ExecuteMiscBroadcastChat(const std::string& rawText, uint8_t chatType)
+    {
+        auto text = TrimCopy(rawText);
+        if (text.empty())
+            return false;
+
+        uintptr_t invokeTarget = 0;
+        if (!EnsureMiscStaticsBase(invokeTarget))
+            return false;
+
+        uintptr_t functionPtr = 0;
+        if (!EnsureMiscStaticsFunction("BroadcastChatLine", s_MiscStaticsBroadcastChatLineFunction, functionPtr))
+            return false;
+
+        uintptr_t worldObject = 0;
+        if (!ResolveWorldObject(worldObject) || !worldObject)
+            return false;
+
+        ProcessEventFn processEvent = nullptr;
+        if (!GetProcessEventInvoker(invokeTarget, processEvent) || !processEvent)
+            return false;
+
+        auto wideText = Utf8ToWideLocal(text);
+        if (wideText.empty())
+            return false;
+
+        std::vector<wchar_t> chars(wideText.begin(), wideText.end());
+        chars.push_back(L'\0');
+
+        MiscBroadcastChatParams params{};
+        params.WorldContextObject = reinterpret_cast<UObject*>(worldObject);
+        params.text.Data = chars.data();
+        params.text.Count = static_cast<int32_t>(chars.size());
+        params.text.Max = static_cast<int32_t>(chars.size());
+        params.chatType = chatType;
+
+        processEvent(
+            reinterpret_cast<UObject*>(invokeTarget),
+            reinterpret_cast<UObject*>(functionPtr),
+            &params);
+
+        std::ostringstream ss;
+        ss << "CMD(misc-broadcast) -> " << text
+           << " world=0x" << std::hex << worldObject
+           << " fn=0x" << functionPtr
+           << " chatType=" << std::dec << static_cast<int>(chatType);
+        LogHookLine(ss.str());
+        return true;
+    }
+
+    bool ExecuteMiscSendChatLine(int64_t databaseId, const std::string& rawText, uint8_t chatType)
+    {
+        auto text = TrimCopy(rawText);
+        if (databaseId <= 0 || text.empty())
+            return false;
+
+        auto controller = ResolveControllerByDatabaseId(databaseId);
+        if (!controller)
+        {
+            const auto rpcChannel = s_LastLiveRpcChannel.load();
+            if (rpcChannel)
+            {
+                NativeChatContext ctx{};
+                if (BuildChatContextFromRpcChannel(rpcChannel, ctx) && ctx.DatabaseId == databaseId)
+                {
+                    controller = ResolveControllerFromRpcChannel(rpcChannel);
+                    if (controller)
+                    {
+                        std::ostringstream ss;
+                        ss << "Resolved controller from live rpc fallback. dbId=" << std::dec << databaseId
+                           << " rpc=0x" << std::hex << rpcChannel
+                           << " controller=0x" << controller;
+                        LogHookLine(ss.str());
+                    }
+                }
+            }
+        }
+
+        if (!controller)
+        {
+            std::ostringstream ss;
+            ss << "ExecuteMiscSendChatLine failed: controller not found for dbId=" << std::dec << databaseId
+               << " text=" << text;
+            LogHookLine(ss.str());
+            return false;
+        }
+
+        uintptr_t invokeTarget = 0;
+        if (!EnsureMiscStaticsBase(invokeTarget))
+        {
+            std::ostringstream ss;
+            ss << "ExecuteMiscSendChatLine failed: MiscStatics base unavailable for dbId=" << std::dec << databaseId;
+            LogHookLine(ss.str());
+            return false;
+        }
+
+        uintptr_t functionPtr = 0;
+        if (!EnsureMiscStaticsFunction("SendChatLineToPlayer", s_MiscStaticsSendChatLineFunction, functionPtr))
+        {
+            std::ostringstream ss;
+            ss << "ExecuteMiscSendChatLine failed: SendChatLineToPlayer unresolved for dbId=" << std::dec << databaseId;
+            LogHookLine(ss.str());
+            return false;
+        }
+
+        ProcessEventFn processEvent = nullptr;
+        if (!GetProcessEventInvoker(invokeTarget, processEvent) || !processEvent)
+        {
+            std::ostringstream ss;
+            ss << "ExecuteMiscSendChatLine failed: ProcessEvent invoker unavailable for dbId=" << std::dec << databaseId;
+            LogHookLine(ss.str());
+            return false;
+        }
+
+        auto wideText = Utf8ToWideLocal(text);
+        if (wideText.empty())
+        {
+            std::ostringstream ss;
+            ss << "ExecuteMiscSendChatLine failed: Utf8ToWide conversion failed for dbId=" << std::dec << databaseId;
+            LogHookLine(ss.str());
+            return false;
+        }
+
+        std::vector<wchar_t> chars(wideText.begin(), wideText.end());
+        chars.push_back(L'\0');
+
+        MiscSendChatLineParams params{};
+        params.PlayerController = reinterpret_cast<UObject*>(controller);
+        params.text.Data = chars.data();
+        params.text.Count = static_cast<int32_t>(chars.size());
+        params.text.Max = static_cast<int32_t>(chars.size());
+        params.chatType = chatType;
+        params.shouldCopyToClientClipboard = false;
+
+        processEvent(
+            reinterpret_cast<UObject*>(invokeTarget),
+            reinterpret_cast<UObject*>(functionPtr),
+            &params);
+
+        std::ostringstream ss;
+        ss << "CMD(misc-sendchat) -> dbId=" << std::dec << databaseId
+           << " text=" << text
+           << " controller=0x" << std::hex << controller
+           << " fn=0x" << functionPtr
+           << " chatType=" << std::dec << static_cast<int>(chatType);
+        LogHookLine(ss.str());
+        return true;
+    }
+
+    bool TryExecuteStructuredCommand(const std::string& normalizedCommand)
+    {
+        auto command = TrimCopy(normalizedCommand);
+        if (command.empty())
+            return false;
+
+        while (!command.empty() && command.front() == '#')
+            command.erase(command.begin());
+        command = TrimCopy(command);
+        if (command.empty())
+            return false;
+
+        const auto split = command.find(' ');
+        const auto verb = split == std::string::npos ? command : command.substr(0, split);
+        auto rest = split == std::string::npos ? std::string{} : TrimCopy(command.substr(split + 1));
+
+        if (_stricmp(verb.c_str(), "Announce") == 0 || _stricmp(verb.c_str(), "Broadcast") == 0)
+        {
+            return ExecuteMiscBroadcastChat(rest, kChatTypeServerMessage);
+        }
+
+        if (_stricmp(verb.c_str(), "SendNotification") == 0)
+        {
+            std::istringstream parser(rest);
+            int notificationType = 1;
+            long long databaseId = 0;
+            if (!(parser >> notificationType >> databaseId))
+                return false;
+
+            std::string text;
+            const auto quoted = rest.find('"');
+            if (quoted != std::string::npos)
+            {
+                text = rest.substr(quoted);
+            }
+            else
+            {
+                const auto position = parser.tellg();
+                if (position < 0)
+                    return false;
+
+                text = rest.substr(static_cast<size_t>(position));
+            }
+
+            text = TrimCopy(text);
+            if (!text.empty() && text.front() == '"')
+            {
+                text.erase(text.begin());
+                if (!text.empty() && text.back() == '"')
+                    text.pop_back();
+            }
+
+            uint8_t chatType = kChatTypeServerMessage;
+            if (notificationType == 2)
+                chatType = kChatTypeError;
+            else if (notificationType == 4)
+                chatType = kChatTypeAdmin;
+
+            return ExecuteMiscSendChatLine(databaseId, text, chatType);
         }
 
         return false;
@@ -705,6 +1200,9 @@ namespace
         if (command.empty())
             return false;
 
+        if (TryExecuteStructuredCommand(command))
+            return true;
+
         auto wideCommand = Utf8ToWideLocal(command);
         if (wideCommand.empty())
             return false;
@@ -739,6 +1237,32 @@ namespace
             miscFunctionPtr = ResolveFunctionFromClass(reinterpret_cast<UObject*>(miscClassPtr), "MiscStatics", "Test_ProcessAdminCommand");
             if (miscFunctionPtr)
                 s_MiscStaticsAdminFunction = miscFunctionPtr;
+        }
+
+        if (!miscFunctionPtr)
+        {
+            uintptr_t ownerPtr = 0;
+            uintptr_t resolvedFn = 0;
+            if (ResolveFunctionByNameAnyOwner("Test_ProcessAdminCommand", resolvedFn, ownerPtr))
+            {
+                miscFunctionPtr = resolvedFn;
+                s_MiscStaticsAdminFunction = resolvedFn;
+
+                if (!miscClassPtr && ownerPtr)
+                {
+                    miscClassPtr = ownerPtr;
+                    s_MiscStaticsClass = ownerPtr;
+                    const auto* klass = reinterpret_cast<const UClassRaw*>(ownerPtr);
+                    miscDefaultObjectPtr = reinterpret_cast<uintptr_t>(klass->ClassDefaultObject);
+                    if (miscDefaultObjectPtr)
+                        s_MiscStaticsDefaultObject = miscDefaultObjectPtr;
+                }
+
+                std::ostringstream ss;
+                ss << "Resolved static admin fallback by function name. owner=0x" << std::hex << ownerPtr
+                   << " fn=0x" << resolvedFn;
+                LogHookLine(ss.str());
+            }
         }
 
         const auto miscInvokeTarget = miscDefaultObjectPtr ? miscDefaultObjectPtr : miscClassPtr;
@@ -842,6 +1366,7 @@ namespace
         std::string message;
         int32_t chatType = 0;
         bool isChatEvent = false;
+        uint8_t heuristicChannel = 0;
 
         if (s_BroadcastChatFunction.load() == reinterpret_cast<uintptr_t>(function)
             || IsNamedFunction(function, "PlayerRpcChannel", "Chat_Server_BroadcastChatMessage"))
@@ -866,6 +1391,26 @@ namespace
 
             chatType = 4;
             isChatEvent = true;
+        }
+
+        if (!isChatEvent && IsLikelyChatPayload(object, params, message, heuristicChannel))
+        {
+            s_LastLiveRpcChannel = reinterpret_cast<uintptr_t>(object);
+
+            const auto functionPtr = reinterpret_cast<uintptr_t>(function);
+            if (!message.empty() && (message.front() == '/' || message.front() == '!' || message.front() == '#'))
+            {
+                s_BroadcastChatFunction = functionPtr;
+                chatType = static_cast<int32_t>(heuristicChannel);
+                isChatEvent = true;
+
+                std::ostringstream ss;
+                ss << "Auto-learned chat rpc function from live payload. fn=0x"
+                   << std::hex << functionPtr
+                   << " channel=" << std::dec << static_cast<int>(heuristicChannel)
+                   << " text=" << message;
+                LogHookLine(ss.str());
+            }
         }
 
         if (!isChatEvent || message.empty())

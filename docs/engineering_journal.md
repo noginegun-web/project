@@ -193,3 +193,23 @@ Rule:
 - Never trust a client dump for dedicated-server hooks when the server binary has been updated later.
 - On SCUM dedicated UE4.27, treat `GUObjectArray` as `FUObjectArray`, and read `ObjObjects` from `+0x10`.
 - Always validate native hook assumptions with a fresh runtime dump and then retest after the server reaches a warm steady-state, not only during the first seconds after boot.
+
+### 2026-03-18 - Hosted MiscStatics direct broadcast on Ark Hoster
+
+What worked:
+- The hosted native DLL was rebuilt and redeployed through the Ark panel cycle `stop -> FTP upload -> start`.
+- Hosted `#Announce` commands now execute through `UMiscStatics::BroadcastChatLine` instead of the old console-only fallback.
+- The robust fix was to resolve `MiscStatics` from live `UFunction` ownership (`OuterPrivate`) when direct class-name lookup fails on the host.
+- Hosted logs now prove the direct path with lines like:
+  - `Resolved MiscStatics base via owner fallback...`
+  - `CMD(misc-broadcast) -> HOST_MISC_BROADCAST_TEST_*`
+- This confirms the host and local dedicated server can diverge in object-name/class lookup behavior even when the shipped DLL is identical.
+
+What did not work:
+- `SendNotification` is not yet fully validated on the host because it needs a live player/controller at the moment of execution.
+- The previous host failures were not caused by plugin parsing or the web API; they were caused by native structured dispatch failing before `MiscStatics` was resolved.
+
+Rule:
+- For hosted UE dispatch, do not rely only on resolving the owner class by name.
+- If a static engine helper is needed, resolve the `UFunction` directly, then recover the owning class from `OuterPrivate` and use its `ClassDefaultObject`.
+- Always prove hosted fixes with a real hosted log marker, not just a local dedicated-server test.
