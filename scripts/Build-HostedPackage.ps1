@@ -1,6 +1,6 @@
 param(
     [string]$TemplateDir = 'C:\Users\User\Desktop\SCUM_OXYGEN_FTP_READY_2026-03-17',
-    [string]$OutputDir = 'C:\Users\User\Desktop\SCUM_OXYGEN_HOSTING_DROPIN_2026-03-17'
+    [string]$OutputDir = 'C:\Users\User\Desktop\NDJ_RELAY_DROPIN_2026-03-18'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -70,32 +70,41 @@ if (Test-Path $OutputDir) {
 Copy-Item $TemplateDir $OutputDir -Recurse -Force
 
 $uploadDir = Join-Path $OutputDir 'UPLOAD_TO_SERVER'
-$targetScumOxygen = Join-Path $uploadDir 'ScumOxygen'
+$targetRuntimeRoot = Join-Path $uploadDir 'NeDjin'
 
 Copy-Item $proxyDll (Join-Path $uploadDir 'version.dll') -Force
 
-if (Test-Path $targetScumOxygen) {
-    Remove-Item $targetScumOxygen -Recurse -Force
+if (Test-Path $targetRuntimeRoot) {
+    Remove-Item $targetRuntimeRoot -Recurse -Force
 }
-New-Item -ItemType Directory -Path $targetScumOxygen | Out-Null
+New-Item -ItemType Directory -Path $targetRuntimeRoot | Out-Null
 
-Copy-Item (Join-Path $bootstrapPublishDir '*') $targetScumOxygen -Recurse -Force
-Copy-Item (Join-Path $runtimePublishDir '*') $targetScumOxygen -Recurse -Force
-Remove-Item (Join-Path $targetScumOxygen 'ScumOxygen.Core.dll') -Force -ErrorAction SilentlyContinue
-Remove-Item (Join-Path $targetScumOxygen 'ScumOxygen.Core.pdb') -Force -ErrorAction SilentlyContinue
-Remove-Item (Join-Path $targetScumOxygen 'ScumOxygen.Core.deps.json') -Force -ErrorAction SilentlyContinue
-Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.dll') (Join-Path $targetScumOxygen 'ScumOxygen.Runtime.dll') -Force
-Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.pdb') (Join-Path $targetScumOxygen 'ScumOxygen.Runtime.pdb') -Force -ErrorAction SilentlyContinue
-Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.deps.json') (Join-Path $targetScumOxygen 'ScumOxygen.Runtime.deps.json') -Force -ErrorAction SilentlyContinue
-Copy-Item $nativeDll (Join-Path $targetScumOxygen 'ScumOxygen.Native.dll') -Force
-Copy-Item (Join-Path $TemplateDir 'UPLOAD_TO_SERVER\ScumOxygen\oxygen') (Join-Path $targetScumOxygen 'oxygen') -Recurse -Force
+Copy-Item (Join-Path $bootstrapPublishDir '*') $targetRuntimeRoot -Recurse -Force
+Copy-Item (Join-Path $runtimePublishDir '*') $targetRuntimeRoot -Recurse -Force
+Remove-Item (Join-Path $targetRuntimeRoot 'ScumOxygen.Core.dll') -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $targetRuntimeRoot 'ScumOxygen.Core.pdb') -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $targetRuntimeRoot 'ScumOxygen.Core.deps.json') -Force -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.dll') (Join-Path $targetRuntimeRoot 'ScumOxygen.Runtime.dll') -Force
+Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.pdb') (Join-Path $targetRuntimeRoot 'ScumOxygen.Runtime.pdb') -Force -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.deps.json') (Join-Path $targetRuntimeRoot 'ScumOxygen.Runtime.deps.json') -Force -ErrorAction SilentlyContinue
+Copy-Item $nativeDll (Join-Path $targetRuntimeRoot 'ScumOxygen.Native.dll') -Force
 
-$runtimesDir = Join-Path $targetScumOxygen 'runtimes'
+$templateOxygenDirCandidates = @(
+    (Join-Path $TemplateDir 'UPLOAD_TO_SERVER\NeDjin\oxygen'),
+    (Join-Path $TemplateDir 'UPLOAD_TO_SERVER\ScumOxygen\oxygen')
+)
+$templateOxygenDir = $templateOxygenDirCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $templateOxygenDir) {
+    throw "Template oxygen dir not found in: $($templateOxygenDirCandidates -join ', ')"
+}
+Copy-Item $templateOxygenDir (Join-Path $targetRuntimeRoot 'oxygen') -Recurse -Force
+
+$runtimesDir = Join-Path $targetRuntimeRoot 'runtimes'
 if (Test-Path $runtimesDir) {
     Get-ChildItem $runtimesDir -Directory | Where-Object { $_.Name -ne 'win-x64' } | Remove-Item -Recurse -Force
 }
 
-$oxygenRoot = Join-Path $targetScumOxygen 'oxygen'
+$oxygenRoot = Join-Path $targetRuntimeRoot 'oxygen'
 $cacheDir = Join-Path $oxygenRoot 'cache'
 $logsDir = Join-Path $oxygenRoot 'logs'
 if (Test-Path $cacheDir) {
@@ -105,7 +114,7 @@ if (Test-Path $logsDir) {
     Get-ChildItem $logsDir -Force | Remove-Item -Recurse -Force
 }
 
-$targetWebDir = Join-Path $targetScumOxygen 'oxygen\web'
+$targetWebDir = Join-Path $targetRuntimeRoot 'oxygen\web'
 if (Test-Path $webSourceDir) {
     if (Test-Path $targetWebDir) {
         Remove-Item $targetWebDir -Recurse -Force
@@ -119,13 +128,13 @@ if (Test-Path $webSourceDir) {
     Copy-Item $webSourceDir $localPanelDir -Recurse -Force
 }
 
-$targetPluginSourceDir = Join-Path $targetScumOxygen 'oxygen\plugins'
+$targetPluginSourceDir = Join-Path $targetRuntimeRoot 'oxygen\plugins'
 if (Test-Path $pluginSourceDir) {
     New-Item -ItemType Directory -Path $targetPluginSourceDir -Force | Out-Null
     Copy-Item (Join-Path $pluginSourceDir '*') $targetPluginSourceDir -Recurse -Force
 }
 
-$pluginsDir = Join-Path $targetScumOxygen 'Plugins'
+$pluginsDir = Join-Path $targetRuntimeRoot 'Plugins'
 New-Item -ItemType Directory -Path $pluginsDir | Out-Null
 Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.dll') (Join-Path $pluginsDir 'ScumOxygen.Core.dll') -Force
 Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.pdb') (Join-Path $pluginsDir 'ScumOxygen.Core.pdb') -Force -ErrorAction SilentlyContinue
@@ -143,7 +152,7 @@ if (Test-Path $sampleDeps) {
     Copy-Item $sampleDeps (Join-Path $pluginsDir 'ScumOxygen.SamplePlugin.deps.json') -Force
 }
 
-$dotnetRoot = Join-Path $targetScumOxygen 'dotnet'
+$dotnetRoot = Join-Path $targetRuntimeRoot 'dotnet'
 $fxrTarget = Join-Path $dotnetRoot "host\fxr\$resolvedRuntimeVersion"
 $runtimeTarget = Join-Path $dotnetRoot "shared\Microsoft.NETCore.App\$resolvedRuntimeVersion"
 New-Item -ItemType Directory -Path $fxrTarget -Force | Out-Null
@@ -151,7 +160,7 @@ New-Item -ItemType Directory -Path $runtimeTarget -Force | Out-Null
 Copy-Item $hostFxrSource (Join-Path $fxrTarget 'hostfxr.dll') -Force
 Copy-Item (Join-Path $runtimeSource '*') $runtimeTarget -Recurse -Force
 
-$runtimeJsonPath = Join-Path $targetScumOxygen 'oxygen\configs\runtime.json'
+$runtimeJsonPath = Join-Path $targetRuntimeRoot 'oxygen\configs\runtime.json'
 $runtimeJson = [ordered]@{
     EnableLocalWeb = $true
     LocalWebPrefix = 'http://+:8090/'
@@ -172,7 +181,7 @@ $runtimeJson = [ordered]@{
 }
 $runtimeJson | ConvertTo-Json -Depth 5 | Set-Content $runtimeJsonPath -Encoding UTF8
 
-$antiVpnConfigPath = Join-Path $targetScumOxygen 'oxygen\configs\Anti-VPN_System.json'
+$antiVpnConfigPath = Join-Path $targetRuntimeRoot 'oxygen\configs\Anti-VPN_System.json'
 $antiVpnConfig = [ordered]@{
     Enabled = $false
     KickMessage = 'VPN or Proxy connections are not allowed on this server.'
@@ -182,7 +191,7 @@ $antiVpnConfig | ConvertTo-Json -Depth 3 | Set-Content $antiVpnConfigPath -Encod
 
 $panelFiles = @(
     (Join-Path $OutputDir 'LOCAL_PANEL\app.js'),
-    (Join-Path $targetScumOxygen 'oxygen\web\app.js')
+    (Join-Path $targetRuntimeRoot 'oxygen\web\app.js')
 )
 
 foreach ($panelFile in $panelFiles) {
@@ -194,7 +203,7 @@ foreach ($panelFile in $panelFiles) {
 }
 
 $readme = @"
-SCUM_OXYGEN_HOSTING_DROPIN_2026-03-17
+NDJ_RELAY_DROPIN_2026-03-18
 
 Что заливать на хостинг:
 1. Открой папку UPLOAD_TO_SERVER

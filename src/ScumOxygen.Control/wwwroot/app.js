@@ -398,7 +398,7 @@ function defaultMapData() {
     background: {
       url: 'https://scum-map.com/images/interactive_map/scum/island.jpg',
       sourceUrl: 'https://scum-map.com/en/map/',
-      name: 'Остров SCUM'
+      name: 'Остров'
     },
     bounds: {
       minX: -905369.6875,

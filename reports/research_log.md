@@ -276,3 +276,23 @@
 - `src/ScumOxygen.Core/OxygenRuntime.cs`
 - `src/ScumOxygen.Core/ApiController.cs`
 - `scripts/Build-HostedPackage.ps1`
+
+
+## 2026-03-18 14:25:00 - Public rebrand to NeDjin Relay
+**Success:**
+- Rebranded the public-facing project title to `NeDjin Relay`.
+- Updated the hosted package layout to deploy under `NeDjin` instead of `ScumOxygen`.
+- Updated server proxy bootstrap to prefer `NeDjin` and fallback to `ScumOxygen` for compatibility.
+- Updated the web panel branding and install instructions to the neutral runtime name.
+- Switched default build/test package paths to `NDJ_RELAY_*`.
+
+**Why this matters:**
+- The project should not be trivially discoverable by game-specific branding in public titles and package names.
+
+**Files changed:**
+- `src/ScumOxygen.ServerProxy/version.cpp`
+- `scripts/Build-HostedPackage.ps1`
+- `scripts/Test-HostedBootstrap.ps1`
+- `src/ScumOxygen.Control/wwwroot/index.html`
+- `src/ScumOxygen.Control/wwwroot/app.js`
+- `README.md`

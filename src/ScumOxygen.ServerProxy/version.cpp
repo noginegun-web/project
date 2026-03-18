@@ -21,15 +21,31 @@ static std::once_flag g_realOnce;
 static std::once_flag g_hostOnce;
 static HMODULE g_nativeModule = nullptr;
 
+static bool DirectoryExists(const std::wstring& path);
+
+static std::wstring GetRuntimeRoot(const std::wstring& baseDir)
+{
+    const auto preferred = baseDir + L"\\NeDjin";
+    if (DirectoryExists(preferred))
+        return preferred;
+
+    const auto legacy = baseDir + L"\\ScumOxygen";
+    if (DirectoryExists(legacy))
+        return legacy;
+
+    return preferred;
+}
+
 static void LogLine(const std::wstring& line)
 {
     wchar_t path[MAX_PATH] = {0};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     PathRemoveFileSpecW(path);
     std::wstring baseDir = path;
-    const auto oxygenDir = baseDir + L"\\ScumOxygen\\oxygen";
+    const auto runtimeRoot = GetRuntimeRoot(baseDir);
+    const auto oxygenDir = runtimeRoot + L"\\oxygen";
     std::wstring logDir = oxygenDir + L"\\logs";
-    CreateDirectoryW((baseDir + L"\\ScumOxygen").c_str(), nullptr);
+    CreateDirectoryW(runtimeRoot.c_str(), nullptr);
     CreateDirectoryW(oxygenDir.c_str(), nullptr);
     CreateDirectoryW(logDir.c_str(), nullptr);
     std::wstring logPath = logDir + L"\\proxy.log";
@@ -49,9 +65,10 @@ static void LogLineA(const std::string& line)
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     PathRemoveFileSpecW(path);
     std::wstring baseDir = path;
-    const auto oxygenDir = baseDir + L"\\ScumOxygen\\oxygen";
+    const auto runtimeRoot = GetRuntimeRoot(baseDir);
+    const auto oxygenDir = runtimeRoot + L"\\oxygen";
     std::wstring logDir = oxygenDir + L"\\logs";
-    CreateDirectoryW((baseDir + L"\\ScumOxygen").c_str(), nullptr);
+    CreateDirectoryW(runtimeRoot.c_str(), nullptr);
     CreateDirectoryW(oxygenDir.c_str(), nullptr);
     CreateDirectoryW(logDir.c_str(), nullptr);
     std::wstring logPath = logDir + L"\\proxy.log";
@@ -241,7 +258,7 @@ static void StartManaged(HMODULE mod)
     std::call_once(g_hostOnce, [mod]() {
         LogLineA("[proxy] StartManaged");
         std::wstring baseDir = GetModuleDir(mod);
-        std::wstring managedDir = baseDir + L"\\ScumOxygen";
+        std::wstring managedDir = GetRuntimeRoot(baseDir);
         LoadNativeBridge(managedDir);
         if (!LoadHostfxr(managedDir)) return;
 

@@ -44,9 +44,12 @@ Rule:
 What worked:
 - Making the repository link shareable so external review is possible.
 - Rewriting README to match current architecture instead of legacy injector-era docs.
+- Rebranding the visible project surface under the `NeDjin Relay` name.
 
 What did not work:
 - Keeping outdated project instructions in public view.
+- Leaving highly searchable game-specific branding in public-facing titles and package names.
 
 Rule:
 - Public-facing docs must reflect the current architecture, not historical experiments.
+- Public-facing names should prefer the neutral `NeDjin Relay` brand unless a compatibility constraint prevents it.
