@@ -14,7 +14,6 @@ $nativeCandidates = @(
     (Join-Path $repoRoot 'src\ScumOxygen.Native\build\Release\ScumOxygen.Native.dll')
 )
 $bootstrapRuntimeConfig = Join-Path $bootstrapPublishDir 'ScumOxygen.Bootstrap.runtimeconfig.json'
-$sampleDir = Join-Path $repoRoot 'src\ScumOxygen.SamplePlugin\bin\Release\net8.0-windows'
 $webSourceDir = Join-Path $repoRoot 'src\ScumOxygen.Control\wwwroot'
 $pluginSourceDir = Join-Path $repoRoot 'dist\server\oxygen\plugins'
 
@@ -138,24 +137,6 @@ if (Test-Path $pluginSourceDir) {
 $antiVpnPluginPath = Join-Path $targetPluginSourceDir 'anti-vpn.cs'
 if (Test-Path $antiVpnPluginPath) {
     Remove-Item $antiVpnPluginPath -Force
-}
-
-$pluginsDir = Join-Path $targetRuntimeRoot 'Plugins'
-New-Item -ItemType Directory -Path $pluginsDir | Out-Null
-Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.dll') (Join-Path $pluginsDir 'ScumOxygen.Core.dll') -Force
-Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.pdb') (Join-Path $pluginsDir 'ScumOxygen.Core.pdb') -Force -ErrorAction SilentlyContinue
-
-$sampleDll = Join-Path $sampleDir 'ScumOxygen.SamplePlugin.dll'
-$samplePdb = Join-Path $sampleDir 'ScumOxygen.SamplePlugin.pdb'
-$sampleDeps = Join-Path $sampleDir 'ScumOxygen.SamplePlugin.deps.json'
-if (Test-Path $sampleDll) {
-    Copy-Item $sampleDll (Join-Path $pluginsDir 'ScumOxygen.SamplePlugin.dll') -Force
-}
-if (Test-Path $samplePdb) {
-    Copy-Item $samplePdb (Join-Path $pluginsDir 'ScumOxygen.SamplePlugin.pdb') -Force
-}
-if (Test-Path $sampleDeps) {
-    Copy-Item $sampleDeps (Join-Path $pluginsDir 'ScumOxygen.SamplePlugin.deps.json') -Force
 }
 
 $dotnetRoot = Join-Path $targetRuntimeRoot 'dotnet'

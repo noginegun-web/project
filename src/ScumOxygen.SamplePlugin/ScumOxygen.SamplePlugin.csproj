@@ -6,6 +6,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\ScumOxygen.Core\ScumOxygen.Core.csproj" />
+    <ProjectReference Include="..\ScumOxygen.Core\ScumOxygen.Core.csproj">
+      <Private>false</Private>
+    </ProjectReference>
   </ItemGroup>
 </Project>
