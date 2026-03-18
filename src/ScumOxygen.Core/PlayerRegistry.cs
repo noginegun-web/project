@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Oxygen.Csharp.API;
 
 namespace ScumOxygen.Core;
@@ -12,7 +13,11 @@ public sealed class PlayerRegistry
 
     public IReadOnlyList<PlayerBase> List()
     {
-        return _bySteam.Values.ToList().AsReadOnly();
+        return _bySteam.Values
+            .GroupBy(p => RuntimeHelpers.GetHashCode(p))
+            .Select(g => g.First())
+            .ToList()
+            .AsReadOnly();
     }
 
     public PlayerBase? Find(string query)
@@ -135,30 +140,40 @@ public sealed class PlayerRegistry
 
             if (!_bySteam.TryGetValue(s.SteamId, out var p))
             {
-                p = new PlayerBase
+                if (!string.IsNullOrWhiteSpace(s.Name) && _byName.TryGetValue(s.Name, out var byName))
                 {
-                    SteamId = s.SteamId,
-                    Name = s.Name,
-                    IpAddress = s.IpAddress,
-                    DatabaseId = s.Id,
-                    Money = s.Money,
-                    Location = s.Location
-                };
-                _bySteam[s.SteamId] = p;
-                if (!string.IsNullOrWhiteSpace(p.Name))
-                    _byName[p.Name] = p;
-                joined.Add(p);
+                    p = byName;
+                    var oldNameKey = $"name:{s.Name}";
+                    if (_bySteam.ContainsKey(oldNameKey))
+                        _bySteam.Remove(oldNameKey);
+                    _bySteam[s.SteamId] = p;
+                }
+                else
+                {
+                    p = new PlayerBase
+                    {
+                        SteamId = s.SteamId,
+                        Name = s.Name,
+                        IpAddress = s.IpAddress,
+                        DatabaseId = s.Id,
+                        Money = s.Money,
+                        Location = s.Location
+                    };
+                    _bySteam[s.SteamId] = p;
+                    if (!string.IsNullOrWhiteSpace(p.Name))
+                        _byName[p.Name] = p;
+                    joined.Add(p);
+                }
             }
-            else
-            {
-                p.Name = s.Name;
-                p.IpAddress = s.IpAddress;
-                p.DatabaseId = s.Id;
-                p.Money = s.Money;
-                p.Location = s.Location;
-                if (!string.IsNullOrWhiteSpace(p.Name))
-                    _byName[p.Name] = p;
-            }
+
+            p.SteamId = s.SteamId;
+            p.Name = s.Name;
+            p.IpAddress = s.IpAddress;
+            p.DatabaseId = s.Id;
+            p.Money = s.Money;
+            p.Location = s.Location;
+            if (!string.IsNullOrWhiteSpace(p.Name))
+                _byName[p.Name] = p;
         }
 
         var toRemove = _bySteam.Keys.Where(k => !seen.Contains(k)).ToList();

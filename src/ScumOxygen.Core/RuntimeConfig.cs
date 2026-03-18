@@ -16,6 +16,12 @@ public sealed class RuntimeConfig
     public string DatabasePath { get; set; } = "";
     public string MapImageUrl { get; set; } = "https://scum-map.com/images/interactive_map/scum/island.jpg";
     public string MapSourceUrl { get; set; } = "https://scum-map.com/en/map/";
+    public double MapMinX { get; set; } = -905369.6875;
+    public double MapMaxX { get; set; } = 619646.5625;
+    public double MapMinY { get; set; } = -904357.625;
+    public double MapMaxY { get; set; } = 619659.75;
+    public bool MapInvertX { get; set; } = true;
+    public bool MapInvertY { get; set; } = true;
 
     public static RuntimeConfig Load(string path)
     {

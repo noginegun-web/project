@@ -163,6 +163,12 @@ $runtimeJson = [ordered]@{
     DatabasePath = ''
     MapImageUrl = 'https://scum-map.com/images/interactive_map/scum/island.jpg'
     MapSourceUrl = 'https://scum-map.com/en/map/'
+    MapMinX = -905369.6875
+    MapMaxX = 619646.5625
+    MapMinY = -904357.625
+    MapMaxY = 619659.75
+    MapInvertX = $true
+    MapInvertY = $true
 }
 $runtimeJson | ConvertTo-Json -Depth 5 | Set-Content $runtimeJsonPath -Encoding UTF8
 

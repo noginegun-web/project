@@ -111,10 +111,11 @@ public sealed class OxygenRuntime
         {
             _log.Info("Web API: API key пустой — доступ разрешен только с localhost.");
         }
-        _cmdQueue = new CommandQueue(Path.Combine(OxygenPaths.OxygenDir, "commands.txt"));
+        _cmdQueue = new CommandQueue(Path.Combine(OxygenPaths.OxygenDir, "plugin-commands.txt"));
         _timers.Every(TimeSpan.FromSeconds(1), PollCommands);
         _nativeBridge = new NativeBridgeService(_log, _players, this);
         _nativeBridge.Start();
+        _commandsSvc.SetNativeCommandSender(command => _nativeBridge?.TrySendServerCommand(command) == true);
         _eventPump = new ServerEventPump(_log, _timers, _commandsSvc, _players, this);
         _eventPump.Start();
         LoadAll();
@@ -205,6 +206,7 @@ public sealed class OxygenRuntime
         }
 
         var econ = GetEconomySnapshot();
+        var quickAccessBySteam = ReadQuickAccessBySteam();
         var players = _players.List()
             .Select(p => new
             {
@@ -225,7 +227,13 @@ public sealed class OxygenRuntime
                 HasUsedNewPlayerProtection = econ.Map.TryGetValue(p.SteamId, out var e11) && e11.HasUsedNewPlayerProtection,
                 Gold = 0,
                 Online = true,
-                Source = _commandsSvc.Enabled ? "rcon" : "db",
+                Source = p.LastNativeUpdate > DateTimeOffset.UtcNow.AddMinutes(-2)
+                    ? "native"
+                    : (_commandsSvc.Enabled ? "rcon" : "db"),
+                NativePlayerId = p.NativePlayerId,
+                ItemInHands = p.ItemInHands,
+                QuickAccessItems = quickAccessBySteam.TryGetValue(p.SteamId, out var items) ? items : Array.Empty<string>(),
+                LastNativeUpdate = p.LastNativeUpdate == default ? "" : p.LastNativeUpdate.ToString("u"),
                 Location = new { p.Location.X, p.Location.Y, p.Location.Z }
             })
             .ToList();
@@ -310,10 +318,12 @@ public sealed class OxygenRuntime
         {
             bounds = new
             {
-                minX = -760000,
-                maxX = 760000,
-                minY = -760000,
-                maxY = 760000
+                minX = _runtimeConfig.MapMinX,
+                maxX = _runtimeConfig.MapMaxX,
+                minY = _runtimeConfig.MapMinY,
+                maxY = _runtimeConfig.MapMaxY,
+                invertX = _runtimeConfig.MapInvertX,
+                invertY = _runtimeConfig.MapInvertY
             },
             background = new
             {
@@ -605,6 +615,65 @@ FROM user_profile";
         }
     }
 
+    private Dictionary<string, string[]> ReadQuickAccessBySteam()
+    {
+        var result = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            var dbPath = ResolveDatabasePath();
+            if (string.IsNullOrWhiteSpace(dbPath) || !File.Exists(dbPath))
+                return result;
+
+            using var conn = new SqliteConnection($"Data Source={dbPath};Mode=ReadOnly");
+            conn.Open();
+
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+SELECT up.user_id,
+       q.slot_index,
+       COALESCE(e.class, q.item_entity_setup, '') AS item_name
+FROM user_profile up
+JOIN prisoner_entity pe ON pe.prisoner_id = up.prisoner_id
+JOIN prisoner_inventory_quick_access_slot q ON q.prisoner_entity_id = pe.entity_id
+LEFT JOIN entity e ON e.id = q.item_entity_id
+WHERE up.user_id IS NOT NULL
+ORDER BY up.user_id, q.slot_index";
+
+            using var reader = cmd.ExecuteReader();
+            var map = new Dictionary<string, SortedDictionary<int, string>>(StringComparer.OrdinalIgnoreCase);
+            while (reader.Read())
+            {
+                var steamId = reader.IsDBNull(0) ? string.Empty : reader.GetString(0);
+                if (string.IsNullOrWhiteSpace(steamId))
+                    continue;
+
+                var slotIndex = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
+                var rawName = reader.IsDBNull(2) ? string.Empty : reader.GetString(2);
+                if (!map.TryGetValue(steamId, out var slots))
+                {
+                    slots = new SortedDictionary<int, string>();
+                    map[steamId] = slots;
+                }
+
+                slots[slotIndex] = CleanEntityName(rawName);
+            }
+
+            foreach (var (steamId, slots) in map)
+            {
+                result[steamId] = slots.Values
+                    .Where(v => !string.IsNullOrWhiteSpace(v))
+                    .ToArray();
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"[Players/QuickAccess] Failed to read DB: {ex.GetBaseException().Message}");
+        }
+
+        return result;
+    }
+
     private sealed class SquadInfo
     {
         public int Id { get; init; }
@@ -765,7 +834,6 @@ WHERE (
      OR lower(e.class) LIKE '%crate%'
      OR lower(e.class) LIKE '%locker%'
      OR lower(e.class) LIKE '%wardrobe%'
-     OR lower(e.class) LIKE '%_item_container_%'
       )
   AND (e.location_x <> 0 OR e.location_y <> 0)
 ORDER BY e.id";
@@ -1142,8 +1210,33 @@ WHERE lower(be.asset) LIKE '%flag%'";
         return allow;
     }
 
+    internal bool TryHandlePlayerCommand(Oxygen.Csharp.API.PlayerBase player, string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        if (!(message.StartsWith("/") || message.StartsWith("!")))
+            return false;
+
+        var trimmed = message.TrimStart('/', '!');
+        var split = trimmed.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        var cmd = split.Length > 0 ? split[0] : string.Empty;
+        var argsPart = split.Length > 1 ? split[1] : string.Empty;
+        var args = string.IsNullOrWhiteSpace(argsPart)
+            ? Array.Empty<string>()
+            : argsPart.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        if (string.IsNullOrWhiteSpace(cmd))
+            return false;
+
+        var userId = !string.IsNullOrWhiteSpace(player.SteamId) ? player.SteamId : $"name:{player.Name}";
+        _commands.TryExecute(cmd, args, _permissions, player, userId, _log);
+        return true;
+    }
+
     internal bool DispatchPlayerTakeItemInHands(Oxygen.Csharp.API.PlayerBase player, string itemName)
     {
+        player.ItemInHands = itemName ?? string.Empty;
         var allow = true;
         foreach (var entry in _loaded.Values)
         {

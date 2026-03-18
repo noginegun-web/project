@@ -401,10 +401,12 @@ function defaultMapData() {
       name: 'Остров SCUM'
     },
     bounds: {
-      minX: -760000,
-      maxX: 760000,
-      minY: -760000,
-      maxY: 760000
+      minX: -905369.6875,
+      maxX: 619646.5625,
+      minY: -904357.625,
+      maxY: 619659.75,
+      invertX: true,
+      invertY: true
     },
     updatedAt: '',
     counts: {
@@ -436,7 +438,7 @@ function hasKnownLocation(player) {
 }
 
 function formatLocation(player) {
-  if (!hasKnownLocation(player)) return 'Ожидает live-хуки';
+  if (!hasKnownLocation(player)) return 'Нет live-координат';
   return [player.location.x, player.location.y, player.location.z]
     .map(v => Math.round(Number(v || 0)).toLocaleString('ru-RU'))
     .join(', ');
@@ -458,7 +460,9 @@ function getPlayerSearchBlob(player) {
     player.ipAddress,
     player.authorityIp,
     player.authorityName,
-    player.prisonerId
+    player.prisonerId,
+    player.itemInHands,
+    ...(Array.isArray(player.quickAccessItems) ? player.quickAccessItems : [])
   ].join(' ').toLowerCase();
 }
 
@@ -554,13 +558,15 @@ function renderPlayers() {
     const displayIp = player.authorityIp || player.ipAddress || '—';
     const displayAlias = player.fakeName || player.authorityName || '—';
     const location = formatLocation(player);
-    const equipmentHtml = ['Ступни', 'Ноги', 'Торс', 'Верх', 'Рюкзак', 'Основное']
-      .map(slot => `
-        <div class="equip-slot ghost">
-          <span class="equip-slot-name">${slot}</span>
-          <span class="equip-slot-value">ожидание</span>
+    const quickAccessItems = Array.isArray(player.quickAccessItems) ? player.quickAccessItems.filter(Boolean) : [];
+    const quickAccessHtml = quickAccessItems.length
+      ? quickAccessItems.map((item, index) => `
+        <div class="equip-slot">
+          <span class="equip-slot-name">Слот ${index + 1}</span>
+          <span class="equip-slot-value">${escapeHtml(item)}</span>
         </div>
-      `).join('');
+      `).join('')
+      : '<div class="muted">Сервер пока не отдал быстрые слоты.</div>';
     card.innerHTML = `
       <div class="player-top">
         <div class="player-overview">
@@ -574,6 +580,7 @@ function renderPlayers() {
             </div>
             <div class="player-subline">SteamID: ${escapeHtml(player.steamId || '—')}</div>
             <div class="player-subline">ID заключённого: ${escapeHtml(player.prisonerId || '—')}</div>
+            <div class="player-subline">Native ID: ${escapeHtml(player.nativePlayerId || '—')}</div>
           </div>
         </div>
         <div class="player-actions">
@@ -610,14 +617,13 @@ function renderPlayers() {
         <div class="meta-line"><span>Последний выход</span><strong>${formatStamp(player.lastLogout)}</strong></div>
         <div class="meta-line"><span>Создан</span><strong>${formatStamp(player.createdAt)}</strong></div>
         <div class="meta-line"><span>Локация</span><strong>${escapeHtml(location)}</strong></div>
+        <div class="meta-line"><span>В руках</span><strong>${escapeHtml(player.itemInHands || '—')}</strong></div>
+        <div class="meta-line"><span>Live-обновление</span><strong>${formatStamp(player.lastNativeUpdate)}</strong></div>
       </div>
 
       <div class="player-equipment">
-        <div class="player-section-title">Экипировка</div>
-        <div class="equipment-strip">${equipmentHtml}</div>
-        <div class="equipment-note">
-          Сейчас здесь отображается каркас интерфейса игрока. Как только мы добьём live-хуки, в эти же слоты автоматически пойдут реальные предметы из рук, одежды и рюкзака.
-        </div>
+        <div class="player-section-title">Быстрые слоты</div>
+        <div class="equipment-strip">${quickAccessHtml}</div>
       </div>
     `;
     card.querySelector('[data-action="kick"]').onclick = () => openCommandModal(`#kick ${player.steamId || player.name || ''}`);
@@ -646,8 +652,14 @@ function normalizeMapPoint(marker, bounds) {
 
   const x = Number(marker.x || 0);
   const y = Number(marker.y || 0);
-  const nx = (x - Number(bounds.minX)) / width;
-  const ny = 1 - ((y - Number(bounds.minY)) / height);
+  const invertX = bounds.invertX !== false;
+  const invertY = bounds.invertY !== false;
+  const nx = invertX
+    ? (Number(bounds.maxX) - x) / width
+    : (x - Number(bounds.minX)) / width;
+  const ny = invertY
+    ? (Number(bounds.maxY) - y) / height
+    : (y - Number(bounds.minY)) / height;
 
   if (!Number.isFinite(nx) || !Number.isFinite(ny)) return null;
   return {

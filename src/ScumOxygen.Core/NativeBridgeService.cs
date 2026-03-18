@@ -15,8 +15,10 @@ public sealed class NativeBridgeService
     private readonly Logger _log;
     private readonly PlayerRegistry _players;
     private readonly OxygenRuntime _runtime;
+    private readonly object _pipeLock = new();
     private CancellationTokenSource? _cts;
     private Task? _loopTask;
+    private NamedPipeClientStream? _pipe;
 
     public NativeBridgeService(Logger log, PlayerRegistry players, OxygenRuntime runtime)
     {
@@ -66,6 +68,10 @@ public sealed class NativeBridgeService
 
                 await pipe.ConnectAsync(2500, ct);
                 pipe.ReadMode = PipeTransmissionMode.Message;
+                lock (_pipeLock)
+                {
+                    _pipe = pipe;
+                }
                 _log.Info("[NativeBridge] Connected to ScumOxygen native pipe.");
 
                 while (!ct.IsCancellationRequested && pipe.IsConnected)
@@ -91,6 +97,13 @@ public sealed class NativeBridgeService
             {
                 _log.Error($"[NativeBridge] {ex.GetBaseException().Message}");
             }
+            finally
+            {
+                lock (_pipeLock)
+                {
+                    _pipe = null;
+                }
+            }
 
             try
             {
@@ -100,6 +113,32 @@ public sealed class NativeBridgeService
             {
                 break;
             }
+        }
+    }
+
+    public bool TrySendServerCommand(string command, bool raw = false)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+            return false;
+
+        try
+        {
+            lock (_pipeLock)
+            {
+                if (_pipe == null || !_pipe.IsConnected)
+                    return false;
+
+                var payload = $"{(raw ? "RAW" : "CMD")}|{command}";
+                var bytes = Encoding.UTF8.GetBytes(payload);
+                _pipe.Write(bytes, 0, bytes.Length);
+                _pipe.Flush();
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"[NativeBridge] Command send failed: {ex.GetBaseException().Message}");
+            return false;
         }
     }
 
@@ -155,6 +194,8 @@ public sealed class NativeBridgeService
         if (dto == null || string.IsNullOrWhiteSpace(dto.Name)) return;
 
         var player = _players.UpsertFromNative(dto.Name, new Vector3(0, 0, 0));
+        player.NativePlayerId = dto.PlayerId;
+        player.LastNativeUpdate = DateTimeOffset.UtcNow;
         _runtime.DispatchPlayerConnected(player);
     }
 
@@ -184,10 +225,13 @@ public sealed class NativeBridgeService
         if (dto == null || string.IsNullOrWhiteSpace(dto.Name)) return;
 
         var player = _players.UpsertFromNative(dto.Name, new Vector3(dto.X, dto.Y, dto.Z));
+        player.NativePlayerId = dto.PlayerId;
         player.Location = new Vector3(dto.X, dto.Y, dto.Z);
+        player.LastNativeUpdate = DateTimeOffset.UtcNow;
 
         if (!string.IsNullOrWhiteSpace(dto.ItemInHands))
         {
+            player.ItemInHands = dto.ItemInHands;
             _runtime.DispatchPlayerTakeItemInHands(player, dto.ItemInHands);
         }
     }
@@ -198,6 +242,9 @@ public sealed class NativeBridgeService
         if (dto == null || string.IsNullOrWhiteSpace(dto.Name) || string.IsNullOrWhiteSpace(dto.ItemInHands)) return;
 
         var player = _players.UpsertFromNative(dto.Name, new Vector3(0, 0, 0));
+        player.NativePlayerId = dto.PlayerId;
+        player.ItemInHands = dto.ItemInHands;
+        player.LastNativeUpdate = DateTimeOffset.UtcNow;
         _runtime.DispatchPlayerTakeItemInHands(player, dto.ItemInHands);
     }
 
@@ -207,6 +254,9 @@ public sealed class NativeBridgeService
         if (dto == null || string.IsNullOrWhiteSpace(dto.Name) || string.IsNullOrWhiteSpace(dto.Message)) return;
 
         var player = _players.UpsertFromNative(dto.Name, new Vector3(0, 0, 0));
+        player.NativePlayerId = dto.PlayerId;
+        player.LastNativeUpdate = DateTimeOffset.UtcNow;
+        _runtime.TryHandlePlayerCommand(player, dto.Message);
         _runtime.DispatchPlayerChat(player, dto.Message, dto.ChatType);
     }
 

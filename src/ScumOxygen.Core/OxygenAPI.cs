@@ -118,8 +118,12 @@ public sealed class PlayerBase
     public string Name { get; internal set; } = string.Empty;
     public string IpAddress { get; internal set; } = string.Empty;
     public int DatabaseId { get; internal set; }
+    public int NativePlayerId { get; internal set; }
     public int Money { get; internal set; }
     public Vector3 Location { get; internal set; }
+    public string ItemInHands { get; internal set; } = string.Empty;
+    public IReadOnlyList<string> QuickAccessItems { get; internal set; } = Array.Empty<string>();
+    public DateTimeOffset LastNativeUpdate { get; internal set; }
 
     public PlayerInventory Inventory { get; }
 

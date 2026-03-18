@@ -14,6 +14,7 @@ public sealed class CommandService
     private RconClientLite? _rcon;
     private readonly ConsoleCommandSender _console;
     private readonly string _fileQueuePath;
+    private Func<string, bool>? _nativeCommandSender;
 
     public CommandService(Logger log)
     {
@@ -31,6 +32,11 @@ public sealed class CommandService
 
     public bool Enabled => _cfg.Enabled;
 
+    public void SetNativeCommandSender(Func<string, bool> sender)
+    {
+        _nativeCommandSender = sender;
+    }
+
     public CommandResult Execute(string command)
     {
         return ExecuteAsync(command).GetAwaiter().GetResult();
@@ -40,13 +46,17 @@ public sealed class CommandService
     {
         if (!_cfg.Enabled || _rcon == null)
         {
-            if (_cfg.AllowFileQueue && EnqueueFileCommand(command))
+            if (_nativeCommandSender?.Invoke(command) == true)
             {
-                return CommandResult.Ok("file-queue", TimeSpan.Zero);
+                return CommandResult.Ok("native-pipe", TimeSpan.Zero);
             }
             if (_cfg.AllowConsoleFallback && _console.TrySend(command))
             {
                 return CommandResult.Ok("console", TimeSpan.Zero);
+            }
+            if (_cfg.AllowFileQueue && EnqueueFileCommand(command))
+            {
+                return CommandResult.Ok("file-queue", TimeSpan.Zero);
             }
             _log.Info($"[CommandService] Skipped command (RCON disabled): {command}");
             return CommandResult.Fail("rcon disabled", TimeSpan.Zero);
@@ -59,13 +69,17 @@ public sealed class CommandService
         catch (Exception ex)
         {
             _log.Error($"[CommandService] Command failed: {ex.Message}");
-            if (_cfg.AllowFileQueue && EnqueueFileCommand(command))
+            if (_nativeCommandSender?.Invoke(command) == true)
             {
-                return CommandResult.Ok("file-queue", TimeSpan.Zero);
+                return CommandResult.Ok("native-pipe", TimeSpan.Zero);
             }
             if (_cfg.AllowConsoleFallback && _console.TrySend(command))
             {
                 return CommandResult.Ok("console-fallback", TimeSpan.Zero);
+            }
+            if (_cfg.AllowFileQueue && EnqueueFileCommand(command))
+            {
+                return CommandResult.Ok("file-queue", TimeSpan.Zero);
             }
             return CommandResult.Fail(ex.Message, TimeSpan.Zero);
         }

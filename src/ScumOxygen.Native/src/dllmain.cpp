@@ -98,6 +98,22 @@ namespace
         return output;
     }
 
+    std::wstring Utf8ToWide(const std::string& input)
+    {
+        if (input.empty())
+            return {};
+
+        const auto len = MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, nullptr, 0);
+        if (len <= 1)
+            return {};
+
+        std::wstring output(static_cast<size_t>(len), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, output.data(), len);
+        if (!output.empty() && output.back() == L'\0')
+            output.pop_back();
+        return output;
+    }
+
     std::string JsonEscape(const std::string& value)
     {
         std::string out;
@@ -170,6 +186,48 @@ namespace
         {
             out << command << "\n";
         }
+    }
+
+    bool TrySendConsoleCommand(const std::string& command)
+    {
+        if (command.empty())
+            return false;
+
+        const auto hInput = GetStdHandle(STD_INPUT_HANDLE);
+        if (hInput == nullptr || hInput == INVALID_HANDLE_VALUE)
+            return false;
+
+        DWORD mode = 0;
+        if (!GetConsoleMode(hInput, &mode))
+            return false;
+
+        const auto text = Utf8ToWide(command + "\r\n");
+        if (text.empty())
+            return false;
+
+        std::vector<INPUT_RECORD> records;
+        records.reserve(text.size() * 2);
+
+        for (wchar_t ch : text)
+        {
+            INPUT_RECORD down{};
+            down.EventType = KEY_EVENT;
+            down.Event.KeyEvent.bKeyDown = TRUE;
+            down.Event.KeyEvent.wRepeatCount = 1;
+            down.Event.KeyEvent.wVirtualKeyCode = (ch == L'\r') ? VK_RETURN : 0;
+            down.Event.KeyEvent.uChar.UnicodeChar = ch;
+            records.push_back(down);
+
+            INPUT_RECORD up = down;
+            up.Event.KeyEvent.bKeyDown = FALSE;
+            records.push_back(up);
+        }
+
+        DWORD written = 0;
+        if (!WriteConsoleInputW(hInput, records.data(), static_cast<DWORD>(records.size()), &written))
+            return false;
+
+        return written > 0;
     }
 
     bool ReadPointer(uintptr_t address, uintptr_t& value)
@@ -355,15 +413,29 @@ namespace
 
         if (_stricmp(commandType.c_str(), "CMD") == 0)
         {
-            AppendServerCommand(payload);
-            LogLine(std::string("CMD -> ") + payload);
+            if (TrySendConsoleCommand(payload))
+            {
+                LogLine(std::string("CMD(console) -> ") + payload);
+            }
+            else
+            {
+                AppendServerCommand(payload);
+                LogLine(std::string("CMD(file-fallback) -> ") + payload);
+            }
             return;
         }
 
         if (_stricmp(commandType.c_str(), "RAW") == 0)
         {
-            AppendServerCommand(payload);
-            LogLine(std::string("RAW -> ") + payload);
+            if (TrySendConsoleCommand(payload))
+            {
+                LogLine(std::string("RAW(console) -> ") + payload);
+            }
+            else
+            {
+                AppendServerCommand(payload);
+                LogLine(std::string("RAW(file-fallback) -> ") + payload);
+            }
             return;
         }
 

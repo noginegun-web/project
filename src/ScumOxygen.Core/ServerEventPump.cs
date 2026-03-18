@@ -131,20 +131,7 @@ public sealed class ServerEventPump
                     var player = _players.Find(name) ?? new PlayerBase { Name = name };
                     var chatType = MapChatType(channel);
 
-                    // Command handling: /command arg1 arg2
-                    if (message.StartsWith("/") || message.StartsWith("!"))
-                    {
-                        var trimmed = message.TrimStart('/', '!');
-                        var split = trimmed.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-                        var cmd = split.Length > 0 ? split[0] : string.Empty;
-                        var argsPart = split.Length > 1 ? split[1] : string.Empty;
-                        var args = string.IsNullOrWhiteSpace(argsPart) ? Array.Empty<string>() : argsPart.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                        if (!string.IsNullOrWhiteSpace(cmd))
-                        {
-                            var userId = !string.IsNullOrWhiteSpace(player.SteamId) ? player.SteamId : $"name:{player.Name}";
-                            _runtime.Commands.TryExecute(cmd, args, _runtime.Permissions, player, userId, _log);
-                        }
-                    }
+                    _runtime.TryHandlePlayerCommand(player, message);
 
                     var allow = _runtime.DispatchPlayerChat(player, message, chatType);
                     if (!allow)
