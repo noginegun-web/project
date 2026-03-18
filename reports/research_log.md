@@ -536,3 +536,57 @@ Validation completed:
 Remaining gap after this pass:
 - Some startup-time plugin actions still hit console fallback before the static path becomes ready.
 - Real player chat from a live remote session still needs hosted validation after redeploy.
+## 2026-03-18 - Recovered Oxygen docs from GitHub and compared architecture
+
+Sources recovered:
+- `guide/web-request.md`
+- `guide/http-client.md`
+- `guide/player-hooks.md`
+- `guide/database.md`
+- `api/players-methods.md`
+- `api/server-methods.md`
+
+Where they came from:
+- public `oxygen.docs` repository in the `Oxygen-SCUM` GitHub org
+- the old `docs.3.75.56.93.sslip.io/...` pages map directly to these markdown files
+
+What the original Oxygen docs confirm:
+- Oxygen is hook-first, not log-first.
+- Player events are expected to arrive through live overrides such as:
+  - `OnPlayerConnected`
+  - `OnPlayerDisconnected`
+  - `OnPlayerDeath`
+  - `OnPlayerMeleeAttack`
+- The plugin web system is built into the runtime:
+  - `StartWebServer(int port, string token)`
+  - `[WebRoute(path, method, requireAuth)]`
+- The HTTP client is asynchronous / non-blocking by design and intended for game-server safety.
+- Database access is explicitly read-only and used as a convenience layer, not as the primary live game-state authority.
+- Player and Server APIs are expected to expose high-level helpers like:
+  - `player.Reply(...)`
+  - `player.ProcessCommand(...)`
+  - `Server.PrintToChat(...)`
+  - `Server.AllPlayers`
+  - inventory/item APIs
+
+Impact on our project:
+- Our earlier dependence on logs and DB as the main command path was architecturally wrong for Oxygen parity.
+- The current hosted kick issue was consistent with that mismatch: we moved toward live hooks, but the first implementation wrote bridge events synchronously from the game thread.
+- The recovered docs reinforce that all transport around live hooks must be non-blocking.
+
+What worked:
+- We successfully mapped the old dead docs URLs to the still-public markdown docs in GitHub.
+- The docs match the direction we already started taking:
+  - internal web server
+  - direct process-backed hooks
+  - read-only DB
+  - async HTTP
+
+What did not work:
+- Wayback/CDX had no usable captures for the `docs.3.75.56.93.sslip.io` pages.
+- Trying to infer Oxygen behavior only from public plugins without checking the docs caused wasted time and wrong assumptions.
+
+Rule:
+- When chasing Oxygen parity, prefer the `oxygen.docs` repo as the primary truth source.
+- Treat logs/DB only as fallback utilities.
+- Any event path that originates from a live UE callback must stay asynchronous all the way into the managed bridge.
