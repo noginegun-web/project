@@ -172,6 +172,14 @@ $runtimeJson = [ordered]@{
 }
 $runtimeJson | ConvertTo-Json -Depth 5 | Set-Content $runtimeJsonPath -Encoding UTF8
 
+$antiVpnConfigPath = Join-Path $targetScumOxygen 'oxygen\configs\Anti-VPN_System.json'
+$antiVpnConfig = [ordered]@{
+    Enabled = $false
+    KickMessage = 'VPN or Proxy connections are not allowed on this server.'
+    BypassPermission = 'antivpn.bypass'
+}
+$antiVpnConfig | ConvertTo-Json -Depth 3 | Set-Content $antiVpnConfigPath -Encoding UTF8
+
 $panelFiles = @(
     (Join-Path $OutputDir 'LOCAL_PANEL\app.js'),
     (Join-Path $targetScumOxygen 'oxygen\web\app.js')

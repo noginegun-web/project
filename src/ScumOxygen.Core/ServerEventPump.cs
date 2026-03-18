@@ -10,6 +10,13 @@ namespace ScumOxygen.Core;
 
 public sealed class ServerEventPump
 {
+    private static readonly Regex ScumChatRegex = new(
+        @"^(?:\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\s*)?'(?<player>[^']+)'\s*'(?<channel>[^:']+):\s*(?<msg>.*)'$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex ScumLoginRegex = new(
+        @"^(?:\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\s*)?'(?<player>[^']+)'\s+(?<state>logged in|logged out|connected|disconnected)\s+at:(?:\s+X=(?<x>-?\d+(?:\.\d+)?))?(?:\s+Y=(?<y>-?\d+(?:\.\d+)?))?(?:\s+Z=(?<z>-?\d+(?:\.\d+)?))?",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
     private readonly Logger _log;
     private readonly TimerService _timers;
     private readonly CommandService _commands;
@@ -23,6 +30,9 @@ public sealed class ServerEventPump
     private Guid _logTimer;
     private Guid _playerTimer;
 
+    private sealed record ChatParsed(string SteamId, string Name, int DatabaseId, string IpAddress, string Channel, string Message);
+    private sealed record LoginParsed(string SteamId, string Name, int DatabaseId, string IpAddress, bool IsJoin, Vector3 Location);
+
     public ServerEventPump(Logger log, TimerService timers, CommandService commands, PlayerRegistry players, OxygenRuntime runtime)
     {
         _log = log;
@@ -34,8 +44,9 @@ public sealed class ServerEventPump
 
     public void Start()
     {
-        var logsDir = System.IO.Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "Saved", "SaveFiles", "Logs");
+        var logsDir = System.IO.Path.Combine(OxygenPaths.BaseDir, "..", "..", "..", "Saved", "SaveFiles", "Logs");
         logsDir = System.IO.Path.GetFullPath(logsDir);
+        _log.Info($"[EventPump] Logs dir: {logsDir}");
 
         _chatTailer = new LogTailer(logsDir, "chat_*.log", Encoding.Unicode);
         _loginTailer = new LogTailer(logsDir, "login_*.log", Encoding.Unicode);
@@ -57,109 +68,134 @@ public sealed class ServerEventPump
 
     private async void PollPlayers()
     {
-        List<PlayerSnapshot> snapshot;
-        if (_commands.Enabled)
+        try
         {
-            var res = await _commands.ExecuteAsync("listplayers");
-            if (!res.Success) return;
-            snapshot = ParsePlayers(res.Response ?? string.Empty);
-        }
-        else
-        {
-            snapshot = _runtime.ReadPlayerSnapshotFromDb();
-        }
+            List<PlayerSnapshot> snapshot;
+            if (_commands.Enabled)
+            {
+                var res = await _commands.ExecuteAsync("listplayers");
+                if (!res.Success) return;
+                snapshot = ParsePlayers(res.Response ?? string.Empty);
+            }
+            else
+            {
+                snapshot = _runtime.ReadPlayerSnapshotFromDb();
+            }
 
-        var (joined, left) = _players.UpdateFromSnapshot(snapshot);
-        foreach (var p in joined)
-        {
-            _runtime.DispatchPlayerConnected(p);
+            var (joined, left) = _players.UpdateFromSnapshot(snapshot);
+            foreach (var p in joined)
+            {
+                _runtime.DispatchPlayerConnected(p);
+            }
+            foreach (var p in left)
+            {
+                _runtime.DispatchPlayerDisconnected(p);
+            }
         }
-        foreach (var p in left)
+        catch (Exception ex)
         {
-            _runtime.DispatchPlayerDisconnected(p);
+            _log.Error($"[EventPump] PollPlayers failed: {ex}");
         }
     }
 
     private void PollLogs()
     {
-        if (_killTailer != null)
+        try
         {
-            foreach (var line in _killTailer.ReadNewLines())
+            if (_killTailer != null)
             {
-                if (TryParseKillLine(line, out var kill))
+                foreach (var line in _killTailer.ReadNewLines())
                 {
-                    var killer = !string.IsNullOrWhiteSpace(kill.KillerSteamId)
-                        ? _players.UpsertFromLogin(kill.KillerSteamId, kill.KillerName)
-                        : null;
-                    var victim = _players.UpsertFromLogin(kill.VictimSteamId, kill.VictimName);
-
-                    _runtime.DispatchPlayerDeath(victim, killer, kill.Info);
-                    if (killer != null)
+                    if (TryParseKillLine(line, out var kill))
                     {
-                        _runtime.DispatchPlayerKill(killer, victim, kill.Info);
+                        var killer = !string.IsNullOrWhiteSpace(kill.KillerSteamId)
+                            ? _players.UpsertFromLogin(kill.KillerSteamId, kill.KillerName)
+                            : null;
+                        var victim = _players.UpsertFromLogin(kill.VictimSteamId, kill.VictimName);
+
+                        _runtime.DispatchPlayerDeath(victim, killer, kill.Info);
+                        if (killer != null)
+                        {
+                            _runtime.DispatchPlayerKill(killer, victim, kill.Info);
+                        }
+                    }
+                }
+            }
+
+            if (_eventKillTailer != null)
+            {
+                foreach (var line in _eventKillTailer.ReadNewLines())
+                {
+                    if (TryParseKillLine(line, out var kill))
+                    {
+                        var killer = !string.IsNullOrWhiteSpace(kill.KillerSteamId)
+                            ? _players.UpsertFromLogin(kill.KillerSteamId, kill.KillerName)
+                            : null;
+                        var victim = _players.UpsertFromLogin(kill.VictimSteamId, kill.VictimName);
+
+                        _runtime.DispatchPlayerDeath(victim, killer, kill.Info);
+                        if (killer != null)
+                        {
+                            _runtime.DispatchPlayerKill(killer, victim, kill.Info);
+                        }
+                    }
+                }
+            }
+
+            if (_chatTailer != null)
+            {
+                foreach (var line in _chatTailer.ReadNewLines())
+                {
+                    if (TryParseChatLine(line, out var chat))
+                    {
+                        var player = _players.UpsertFromLogin(chat.SteamId, chat.Name, chat.DatabaseId, chat.IpAddress);
+                        var chatType = MapChatType(chat.Channel);
+
+                        if (chat.Message.StartsWith("/") || chat.Message.StartsWith("!"))
+                        {
+                            _log.Info($"[EventPump] Chat parsed: steamId={chat.SteamId}, dbId={chat.DatabaseId}, name={chat.Name}, channel={chat.Channel}, message={chat.Message}");
+                        }
+
+                        _runtime.TryHandlePlayerCommand(player, chat.Message);
+
+                        var allow = _runtime.DispatchPlayerChat(player, chat.Message, chatType);
+                        if (!allow)
+                        {
+                            // Best-effort: no direct cancel from logs
+                        }
+                    }
+                    else if (line.Contains("/:") || line.Contains("/"))
+                    {
+                        _log.Info($"[EventPump] Chat line ignored: {line}");
+                    }
+                }
+            }
+
+            if (_loginTailer != null)
+            {
+                foreach (var line in _loginTailer.ReadNewLines())
+                {
+                    if (TryParseLoginLine(line, out var login))
+                    {
+                        var player = _players.UpsertFromLogin(login.SteamId, login.Name, login.DatabaseId, login.IpAddress, login.Location);
+                        _log.Info($"[EventPump] Login parsed: steamId={login.SteamId}, dbId={login.DatabaseId}, name={login.Name}, join={login.IsJoin}, ip={login.IpAddress}, loc={login.Location}");
+
+                        if (login.IsJoin)
+                        {
+                            _runtime.DispatchPlayerConnected(player);
+                        }
+                        else
+                        {
+                            _players.RemoveFromLogin(login.SteamId, login.Name);
+                            _runtime.DispatchPlayerDisconnected(player);
+                        }
                     }
                 }
             }
         }
-
-        if (_eventKillTailer != null)
+        catch (Exception ex)
         {
-            foreach (var line in _eventKillTailer.ReadNewLines())
-            {
-                if (TryParseKillLine(line, out var kill))
-                {
-                    var killer = !string.IsNullOrWhiteSpace(kill.KillerSteamId)
-                        ? _players.UpsertFromLogin(kill.KillerSteamId, kill.KillerName)
-                        : null;
-                    var victim = _players.UpsertFromLogin(kill.VictimSteamId, kill.VictimName);
-
-                    _runtime.DispatchPlayerDeath(victim, killer, kill.Info);
-                    if (killer != null)
-                    {
-                        _runtime.DispatchPlayerKill(killer, victim, kill.Info);
-                    }
-                }
-            }
-        }
-
-        if (_chatTailer != null)
-        {
-            foreach (var line in _chatTailer.ReadNewLines())
-            {
-                if (TryParseChatLine(line, out var channel, out var name, out var message))
-                {
-                    var player = _players.Find(name) ?? new PlayerBase { Name = name };
-                    var chatType = MapChatType(channel);
-
-                    _runtime.TryHandlePlayerCommand(player, message);
-
-                    var allow = _runtime.DispatchPlayerChat(player, message, chatType);
-                    if (!allow)
-                    {
-                        // Best-effort: no direct cancel from logs
-                    }
-                }
-            }
-        }
-
-        if (_loginTailer != null)
-        {
-            foreach (var line in _loginTailer.ReadNewLines())
-            {
-                if (TryParseLoginLine(line, out var steamId, out var name, out var isJoin))
-                {
-                    var player = _players.UpsertFromLogin(steamId, name);
-                    if (isJoin)
-                    {
-                        _runtime.DispatchPlayerConnected(player);
-                    }
-                    else
-                    {
-                        _players.RemoveFromLogin(steamId, name);
-                        _runtime.DispatchPlayerDisconnected(player);
-                    }
-                }
-            }
+            _log.Error($"[EventPump] PollLogs failed: {ex}");
         }
     }
 
@@ -172,47 +208,113 @@ public sealed class ServerEventPump
         return 0;
     }
 
-    private static bool TryParseChatLine(string line, out string channel, out string name, out string message)
+    private static bool TryParseChatLine(string line, out ChatParsed chat)
     {
-        channel = string.Empty;
-        name = string.Empty;
-        message = string.Empty;
+        chat = new ChatParsed(string.Empty, string.Empty, 0, string.Empty, string.Empty, string.Empty);
         if (string.IsNullOrWhiteSpace(line)) return false;
 
-        // Examples:
-        // 2026.03.17-12.00.00: [Global] PlayerName: Hello
-        // [Global] PlayerName: Hello
-        var m = Regex.Match(line, @"\[(?<chan>[^\]]+)\]\s*(?<name>[^:]+):\s*(?<msg>.+)$");
+        var m = ScumChatRegex.Match(line);
         if (!m.Success) return false;
 
-        channel = m.Groups["chan"].Value.Trim();
-        name = m.Groups["name"].Value.Trim();
-        message = m.Groups["msg"].Value.Trim();
-        return !string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(message);
+        if (!TryParsePlayerToken(
+                m.Groups["player"].Value.Trim(),
+                out var steamId,
+                out var name,
+                out var databaseId,
+                out var ipAddress))
+        {
+            return false;
+        }
+
+        var channel = m.Groups["channel"].Value.Trim();
+        var message = m.Groups["msg"].Value.Trim();
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(message))
+            return false;
+
+        chat = new ChatParsed(steamId, name, databaseId, ipAddress, channel, message);
+        return true;
     }
 
-    private static bool TryParseLoginLine(string line, out string steamId, out string name, out bool isJoin)
+    private static bool TryParseLoginLine(string line, out LoginParsed login)
+    {
+        login = new LoginParsed(string.Empty, string.Empty, 0, string.Empty, false, default);
+        if (string.IsNullOrWhiteSpace(line)) return false;
+
+        var match = ScumLoginRegex.Match(line);
+        if (!match.Success)
+            return false;
+
+        if (!TryParsePlayerToken(
+                match.Groups["player"].Value.Trim(),
+                out var steamId,
+                out var name,
+                out var databaseId,
+                out var ipAddress))
+        {
+            return false;
+        }
+
+        var state = match.Groups["state"].Value.Trim();
+        var isJoin = state.Contains("logged in", StringComparison.OrdinalIgnoreCase) ||
+                     state.Contains("connected", StringComparison.OrdinalIgnoreCase);
+        var location = new Vector3(
+            ParseCoordinate(match.Groups["x"].Value),
+            ParseCoordinate(match.Groups["y"].Value),
+            ParseCoordinate(match.Groups["z"].Value));
+
+        login = new LoginParsed(steamId, name, databaseId, ipAddress, isJoin, location);
+        return true;
+    }
+
+    private static bool TryParsePlayerToken(string token, out string steamId, out string name, out int databaseId, out string ipAddress)
     {
         steamId = string.Empty;
         name = string.Empty;
-        isJoin = false;
-        if (string.IsNullOrWhiteSpace(line)) return false;
+        databaseId = 0;
+        ipAddress = string.Empty;
 
-        var lower = line.ToLowerInvariant();
-        if (!(lower.Contains("logged in") || lower.Contains("logged out") || lower.Contains("connected") || lower.Contains("disconnected")))
+        if (string.IsNullOrWhiteSpace(token))
             return false;
 
-        isJoin = lower.Contains("logged in") || lower.Contains("connected");
+        var work = token.Trim();
+        var firstSpace = work.IndexOf(' ');
+        if (firstSpace > 0)
+        {
+            var candidateIp = work[..firstSpace].Trim();
+            if (System.Net.IPAddress.TryParse(candidateIp, out _))
+            {
+                ipAddress = candidateIp;
+                work = work[(firstSpace + 1)..].Trim();
+            }
+        }
 
-        // Try extract SteamID (17-digit)
-        var m = Regex.Match(line, @"(\d{17})");
-        if (m.Success) steamId = m.Groups[1].Value;
+        var colonIndex = work.IndexOf(':');
+        if (colonIndex <= 0)
+            return false;
 
-        // Try extract name between quotes
-        var n = Regex.Match(line, "\"([^\"]+)\"");
-        if (n.Success) name = n.Groups[1].Value;
+        steamId = work[..colonIndex].Trim();
+        if (!Regex.IsMatch(steamId, @"^\d{17}$"))
+            return false;
 
-        return !string.IsNullOrWhiteSpace(name) || !string.IsNullOrWhiteSpace(steamId);
+        var remainder = work[(colonIndex + 1)..].Trim();
+        var tail = Regex.Match(remainder, @"^(?<name>.*?)(?:\((?<db>\d+)\))?$", RegexOptions.CultureInvariant);
+        if (!tail.Success)
+            return false;
+
+        name = tail.Groups["name"].Value.Trim();
+        if (tail.Groups["db"].Success)
+        {
+            _ = int.TryParse(tail.Groups["db"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out databaseId);
+        }
+
+        return !string.IsNullOrWhiteSpace(name);
+    }
+
+    private static double ParseCoordinate(string raw)
+    {
+        return double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : 0;
     }
 
     private sealed record KillParsed(string KillerSteamId, string KillerName, string VictimSteamId, string VictimName, KillInfo Info);

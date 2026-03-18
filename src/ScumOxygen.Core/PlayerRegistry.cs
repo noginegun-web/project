@@ -30,7 +30,7 @@ public sealed class PlayerRegistry
                                  p.Name.Contains(query, StringComparison.OrdinalIgnoreCase));
     }
 
-    public PlayerBase UpsertFromLogin(string steamId, string name)
+    public PlayerBase UpsertFromLogin(string steamId, string name, int databaseId = 0, string ipAddress = "", Vector3? location = null)
     {
         var hasSteam = !string.IsNullOrWhiteSpace(steamId);
         var key = hasSteam ? steamId : $"name:{name}";
@@ -39,6 +39,9 @@ public sealed class PlayerRegistry
         {
             if (hasSteam) existing.SteamId = steamId;
             if (!string.IsNullOrWhiteSpace(name)) existing.Name = name;
+            if (databaseId > 0) existing.DatabaseId = databaseId;
+            if (!string.IsNullOrWhiteSpace(ipAddress)) existing.IpAddress = ipAddress;
+            if (location.HasValue) existing.Location = location.Value;
             if (!string.IsNullOrWhiteSpace(existing.Name)) _byName[existing.Name] = existing;
             return existing;
         }
@@ -52,6 +55,9 @@ public sealed class PlayerRegistry
                 _bySteam.Remove(nameKey);
                 temp.SteamId = steamId;
                 temp.Name = name;
+                if (databaseId > 0) temp.DatabaseId = databaseId;
+                if (!string.IsNullOrWhiteSpace(ipAddress)) temp.IpAddress = ipAddress;
+                if (location.HasValue) temp.Location = location.Value;
                 _bySteam[steamId] = temp;
                 _byName[name] = temp;
                 return temp;
@@ -61,7 +67,10 @@ public sealed class PlayerRegistry
         var p = new PlayerBase
         {
             SteamId = hasSteam ? steamId : string.Empty,
-            Name = name
+            Name = name,
+            DatabaseId = databaseId,
+            IpAddress = ipAddress,
+            Location = location ?? default
         };
         _bySteam[key] = p;
         if (!string.IsNullOrWhiteSpace(name)) _byName[name] = p;
