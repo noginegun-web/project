@@ -213,3 +213,33 @@ Rule:
 - For hosted UE dispatch, do not rely only on resolving the owner class by name.
 - If a static engine helper is needed, resolve the `UFunction` directly, then recover the owning class from `OuterPrivate` and use its `ClassDefaultObject`.
 - Always prove hosted fixes with a real hosted log marker, not just a local dedicated-server test.
+
+### 2026-03-18 - Hosted chat hook GameThread hang and safe pipe dispatch
+
+What worked:
+- The real disconnect cause on Ark Hoster was isolated from `SCUM.log`, not guessed:
+  - after a live player typed `/hello`, the server logged `Hang detected on GameThread`
+  - the hang stack pointed into `ScumOxygen.Native.dll`
+- The trigger was the live `ProcessEvent` chat hook sending named-pipe traffic synchronously from the game thread.
+- `Bridge::SendEvent(...)` was moved to a queued background writer thread, so the game thread no longer blocks on `WriteFile(...)`.
+- `anti-vpn` was removed from the hosted runtime surface to keep join diagnostics clean.
+- Hosted redeploy succeeded:
+  - `ScumOxygen.Native.dll` updated on host
+  - `anti-vpn.cs` and `Anti-VPN_System.json` renamed out of the active plugin/config set
+  - server restarted successfully through Ark panel actions
+- Hosted runtime confirmed healthy after restart:
+  - `AntiVpnSystem.AntiVpnPlugin` no longer appears in the new startup log
+  - `/api/plugin-command` with `/hello` now executes successfully on the host
+  - hosted `Oxygen.log` proves:
+    - `[CommandPipeline] Получена команда ... raw='/hello'`
+    - `[CommandService] native-pipe -> #Announce Привет из SamplePlugin`
+    - `[CommandRegistry] 'hello' выполнена успешно`
+
+What did not work:
+- Treating the live kick as a permissions or anti-vpn problem would have sent us in the wrong direction.
+- Blocking named-pipe writes inside a UE callback is unsafe on the dedicated server even when the messages are tiny.
+
+Rule:
+- Never write to the .NET bridge synchronously from a UE game-thread hook.
+- Any live `ProcessEvent` capture must enqueue first and flush from a background worker.
+- When a live player gets kicked after a command, always read `SCUM.log` before changing gameplay logic; transport bugs can masquerade as plugin logic failures.

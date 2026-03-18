@@ -3,18 +3,73 @@
 #include <string>
 #include <queue>
 #include <mutex>
+#include <thread>
+#include <atomic>
+#include <condition_variable>
 
 namespace ScumOxygen {
 
 // Именованный pipe для связи с .NET
 static HANDLE s_Pipe = INVALID_HANDLE_VALUE;
 static std::thread s_ReaderThread;
+static std::thread s_WriterThread;
 static bool s_Running = false;
 static CommandCallback s_CommandCallback = nullptr;
+static std::atomic_bool s_IsConnected = false;
 
 // Очередь событий
 static std::queue<std::string> s_EventQueue;
 static std::mutex s_QueueMutex;
+static std::condition_variable s_QueueCv;
+
+static void QueueEvent(std::string message)
+{
+    if (message.empty())
+        return;
+
+    {
+        std::lock_guard<std::mutex> lock(s_QueueMutex);
+        s_EventQueue.push(std::move(message));
+    }
+
+    s_QueueCv.notify_one();
+}
+
+static void FlushQueuedEvents()
+{
+    while (s_Running)
+    {
+        std::unique_lock<std::mutex> lock(s_QueueMutex);
+        s_QueueCv.wait(lock, []()
+        {
+            return !s_Running || !s_EventQueue.empty();
+        });
+
+        if (!s_Running)
+            return;
+
+        if (!s_IsConnected.load() || s_Pipe == INVALID_HANDLE_VALUE)
+        {
+            lock.unlock();
+            Sleep(25);
+            continue;
+        }
+
+        auto message = std::move(s_EventQueue.front());
+        s_EventQueue.pop();
+        lock.unlock();
+
+        DWORD bytesWritten = 0;
+        if (!WriteFile(s_Pipe, message.c_str(), static_cast<DWORD>(message.length()), &bytesWritten, nullptr))
+        {
+            const auto error = GetLastError();
+            if (error == ERROR_BROKEN_PIPE || error == ERROR_NO_DATA)
+            {
+                s_IsConnected = false;
+            }
+        }
+    }
+}
 
 bool Bridge::Initialize() {
     // Создаем именованный pipe
@@ -35,6 +90,12 @@ bool Bridge::Initialize() {
     }
     
     s_Running = true;
+    s_IsConnected = false;
+
+    s_WriterThread = std::thread([]()
+    {
+        FlushQueuedEvents();
+    });
     
     // Запускаем поток чтения команд от .NET
     s_ReaderThread = std::thread([]() {
@@ -45,6 +106,8 @@ bool Bridge::Initialize() {
         printf("[ScumOxygen] Waiting for .NET bridge connection...\n");
         if (ConnectNamedPipe(s_Pipe, nullptr) || GetLastError() == ERROR_PIPE_CONNECTED) {
             printf("[ScumOxygen] .NET bridge connected\n");
+            s_IsConnected = true;
+            s_QueueCv.notify_all();
             
             while (s_Running) {
                 if (ReadFile(s_Pipe, buffer, sizeof(buffer) - 1, &bytesRead, nullptr)) {
@@ -65,11 +128,14 @@ bool Bridge::Initialize() {
                     // Клиент отключился
                     if (GetLastError() == ERROR_BROKEN_PIPE) {
                         printf("[ScumOxygen] .NET bridge disconnected\n");
+                        s_IsConnected = false;
                         DisconnectNamedPipe(s_Pipe);
                         
                         // Ждем переподключения
                         if (ConnectNamedPipe(s_Pipe, nullptr) || GetLastError() == ERROR_PIPE_CONNECTED) {
                             printf("[ScumOxygen] .NET bridge reconnected\n");
+                            s_IsConnected = true;
+                            s_QueueCv.notify_all();
                         }
                     }
                 }
@@ -82,6 +148,8 @@ bool Bridge::Initialize() {
 
 void Bridge::Shutdown() {
     s_Running = false;
+    s_IsConnected = false;
+    s_QueueCv.notify_all();
     
     if (s_Pipe != INVALID_HANDLE_VALUE) {
         CloseHandle(s_Pipe);
@@ -91,15 +159,16 @@ void Bridge::Shutdown() {
     if (s_ReaderThread.joinable()) {
         s_ReaderThread.join();
     }
+
+    if (s_WriterThread.joinable()) {
+        s_WriterThread.join();
+    }
 }
 
 void Bridge::SendEvent(const char* eventType, const char* data) {
     if (s_Pipe == INVALID_HANDLE_VALUE) return;
-    
-    std::string message = std::string(eventType) + "|" + data;
-    DWORD bytesWritten;
-    
-    WriteFile(s_Pipe, message.c_str(), (DWORD)message.length(), &bytesWritten, nullptr);
+
+    QueueEvent(std::string(eventType ? eventType : "") + "|" + (data ? data : ""));
 }
 
 static std::string EscapeJson(const char* value) {

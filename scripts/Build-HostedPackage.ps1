@@ -135,6 +135,11 @@ if (Test-Path $pluginSourceDir) {
     Copy-Item (Join-Path $pluginSourceDir '*') $targetPluginSourceDir -Recurse -Force
 }
 
+$antiVpnPluginPath = Join-Path $targetPluginSourceDir 'anti-vpn.cs'
+if (Test-Path $antiVpnPluginPath) {
+    Remove-Item $antiVpnPluginPath -Force
+}
+
 $pluginsDir = Join-Path $targetRuntimeRoot 'Plugins'
 New-Item -ItemType Directory -Path $pluginsDir | Out-Null
 Copy-Item (Join-Path $runtimePublishDir 'ScumOxygen.Core.dll') (Join-Path $pluginsDir 'ScumOxygen.Core.dll') -Force
@@ -183,12 +188,9 @@ $runtimeJson = [ordered]@{
 $runtimeJson | ConvertTo-Json -Depth 5 | Set-Content $runtimeJsonPath -Encoding UTF8
 
 $antiVpnConfigPath = Join-Path $targetRuntimeRoot 'oxygen\configs\Anti-VPN_System.json'
-$antiVpnConfig = [ordered]@{
-    Enabled = $false
-    KickMessage = 'VPN or Proxy connections are not allowed on this server.'
-    BypassPermission = 'antivpn.bypass'
+if (Test-Path $antiVpnConfigPath) {
+    Remove-Item $antiVpnConfigPath -Force
 }
-$antiVpnConfig | ConvertTo-Json -Depth 3 | Set-Content $antiVpnConfigPath -Encoding UTF8
 
 $panelTransportPath = Join-Path $targetRuntimeRoot 'oxygen\configs\panel_transport.json'
 $panelTransport = [ordered]@{
@@ -220,6 +222,16 @@ if (Test-Path $compatRuntimeRoot) {
 }
 
 Copy-Item $targetRuntimeRoot $compatRuntimeRoot -Recurse -Force
+
+$compatAntiVpnPluginPath = Join-Path $compatRuntimeRoot 'oxygen\plugins\anti-vpn.cs'
+if (Test-Path $compatAntiVpnPluginPath) {
+    Remove-Item $compatAntiVpnPluginPath -Force
+}
+
+$compatAntiVpnConfigPath = Join-Path $compatRuntimeRoot 'oxygen\configs\Anti-VPN_System.json'
+if (Test-Path $compatAntiVpnConfigPath) {
+    Remove-Item $compatAntiVpnConfigPath -Force
+}
 
 $readme = @"
 NDJ_RELAY_DROPIN_2026-03-18
