@@ -59,7 +59,10 @@ public sealed class OxygenRuntime
         var errorLog = System.IO.Path.Combine(OxygenPaths.LogsDir, "OxygenError.log");
         _compiler = new PluginCompiler(log, errorLog);
         _commands = new CommandRegistry();
-        _permissions = new PermissionService(Path.Combine(OxygenPaths.ConfigsDir, "permissions.json"));
+        _permissions = new PermissionService(
+            Path.Combine(OxygenPaths.DataDir, "oxygen.users.json"),
+            Path.Combine(OxygenPaths.DataDir, "oxygen.groups.json"),
+            Path.Combine(OxygenPaths.ConfigsDir, "permissions.json"));
         _timers = new TimerService();
         _hooks = new HookService();
         _web = new WebApiService();
@@ -232,12 +235,44 @@ public sealed class OxygenRuntime
                     : (_commandsSvc.Enabled ? "rcon" : "db"),
                 NativePlayerId = p.NativePlayerId,
                 ItemInHands = p.ItemInHands,
-                QuickAccessItems = quickAccessBySteam.TryGetValue(p.SteamId, out var items) ? items : Array.Empty<string>(),
+                QuickAccessItems = quickAccessBySteam.TryGetValue(p.SteamId, out var items) ? UpdatePlayerEconomyAndInventory(p, econ.Map.TryGetValue(p.SteamId, out var entry) ? entry : null, items) : UpdatePlayerEconomyAndInventory(p, econ.Map.TryGetValue(p.SteamId, out var fallbackEntry) ? fallbackEntry : null, Array.Empty<string>()),
                 LastNativeUpdate = p.LastNativeUpdate == default ? "" : p.LastNativeUpdate.ToString("u"),
                 Location = new { p.Location.X, p.Location.Y, p.Location.Z }
             })
             .ToList();
         return new { players };
+    }
+
+    private static IReadOnlyList<string> UpdatePlayerEconomyAndInventory(Oxygen.Csharp.API.PlayerBase player, EconomyEntry? entry, IReadOnlyList<string> quickAccessItems)
+    {
+        player.QuickAccessItems = quickAccessItems;
+        player.FakeName = entry?.FakeName ?? player.FakeName;
+        player.FamePoints = entry != null ? Convert.ToInt32(entry.FamePoints, CultureInfo.InvariantCulture) : player.FamePoints;
+        player.Money = entry?.MoneyBalance ?? player.Money;
+        player.IpAddress = entry?.AuthorityIp ?? player.IpAddress;
+        player.Inventory.SetSnapshot(BuildSyntheticInventory(player));
+        return quickAccessItems;
+    }
+
+    private static IReadOnlyList<Oxygen.Csharp.API.Item> BuildSyntheticInventory(Oxygen.Csharp.API.PlayerBase player)
+    {
+        var items = new List<Oxygen.Csharp.API.Item>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(player.ItemInHands) && seen.Add(player.ItemInHands))
+        {
+            items.Add(new Oxygen.Csharp.API.Item(player.ItemInHands, player));
+        }
+
+        foreach (var quickAccessItem in player.QuickAccessItems)
+        {
+            if (string.IsNullOrWhiteSpace(quickAccessItem) || !seen.Add(quickAccessItem))
+                continue;
+
+            items.Add(new Oxygen.Csharp.API.Item(quickAccessItem, player));
+        }
+
+        return items;
     }
 
     public object ExecuteCommand(string command)
@@ -1168,6 +1203,36 @@ WHERE lower(be.asset) LIKE '%flag%'";
             InvokePlugin(entry.Instance, "OnPlayerRespawned", player);
     }
 
+    internal void DispatchPlayerRespawn(Oxygen.Csharp.API.PlayerBase player, Oxygen.Csharp.API.PlayerRespawnData data)
+    {
+        foreach (var entry in _loaded.Values)
+            InvokePlugin(entry.Instance, "OnPlayerRespawn", player, data);
+    }
+
+    internal void DispatchPlayerOpenInventory(Oxygen.Csharp.API.PlayerBase player, string itemName, int ownerDbId, int entityId)
+    {
+        foreach (var entry in _loaded.Values)
+            InvokePlugin(entry.Instance, "OnPlayerOpenInventory", player, itemName, ownerDbId, entityId);
+    }
+
+    internal void DispatchPlayerMeleeAttack(Oxygen.Csharp.API.PlayerBase player, string victimName)
+    {
+        foreach (var entry in _loaded.Values)
+            InvokePlugin(entry.Instance, "OnPlayerMeleeAttack", player, victimName);
+    }
+
+    internal void DispatchPlayerMiniGameEnded(Oxygen.Csharp.API.PlayerBase player, string gameName, bool succeeded)
+    {
+        foreach (var entry in _loaded.Values)
+            InvokePlugin(entry.Instance, "OnPlayerMiniGameEnded", player, gameName, succeeded);
+    }
+
+    internal void DispatchPlayerLockPickEnded(Oxygen.Csharp.API.PlayerBase player, Oxygen.Csharp.API.PlayerLockPickData data)
+    {
+        foreach (var entry in _loaded.Values)
+            InvokePlugin(entry.Instance, "OnPlayerLockPickEnded", player, data);
+    }
+
     internal void DispatchPlayerDeath(Oxygen.Csharp.API.PlayerBase victim, Oxygen.Csharp.API.PlayerBase? killer, Oxygen.Csharp.API.KillInfo info)
     {
         _kills.Add(new KillMessage(
@@ -1182,6 +1247,17 @@ WHERE lower(be.asset) LIKE '%flag%'";
             info.IsSuicide));
         foreach (var entry in _loaded.Values)
             InvokePlugin(entry.Instance, "OnPlayerDeath", victim, killer, info);
+        var deathData = new Oxygen.Csharp.API.DeathData
+        {
+            KillerId = killer?.SteamId ?? string.Empty,
+            KillerName = killer?.Name ?? string.Empty,
+            DeadType = info.IsSuicide ? "Suicide" : "Player",
+            Reason = info.Weapon,
+            Event = false,
+            Distance = (float)info.Distance
+        };
+        foreach (var entry in _loaded.Values)
+            InvokePlugin(entry.Instance, "OnPlayerDeath", victim, deathData);
         _hooks.Emit("OnPlayerDeath", victim, killer, info);
         _hooks.Emit("player_death", victim, killer, info);
     }
@@ -1250,7 +1326,7 @@ WHERE lower(be.asset) LIKE '%flag%'";
     {
         try
         {
-            var method = instance.GetType().GetMethod(methodName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            var method = ResolvePluginMethod(instance.GetType(), methodName, args);
             if (method == null) return null;
             return InvokeMethod(instance, method, args);
         }
@@ -1259,6 +1335,84 @@ WHERE lower(be.asset) LIKE '%flag%'";
             _log.Error($"[Plugin] {instance.GetType().FullName}.{methodName} failed: {ex}");
             return null;
         }
+    }
+
+    private static MethodInfo? ResolvePluginMethod(Type type, string methodName, object?[] args)
+    {
+        var methods = type
+            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .Where(m => string.Equals(m.Name, methodName, StringComparison.Ordinal))
+            .ToList();
+
+        if (methods.Count == 0)
+            return null;
+
+        return methods
+            .Where(m => m.GetParameters().Length == args.Length)
+            .OrderByDescending(m => ScoreMethodMatch(m, args))
+            .FirstOrDefault(m => ScoreMethodMatch(m, args) >= 0);
+    }
+
+    private static int ScoreMethodMatch(MethodInfo method, object?[] args)
+    {
+        var score = 0;
+        var parameters = method.GetParameters();
+        if (parameters.Length != args.Length)
+            return -1;
+
+        for (var i = 0; i < parameters.Length; i++)
+        {
+            var arg = args[i];
+            var targetType = parameters[i].ParameterType;
+
+            if (arg == null)
+            {
+                if (targetType.IsValueType && Nullable.GetUnderlyingType(targetType) == null)
+                    return -1;
+
+                score += 1;
+                continue;
+            }
+
+            if (targetType.IsInstanceOfType(arg))
+            {
+                score += 4;
+                continue;
+            }
+
+            if (CanAdaptArgument(targetType, arg))
+            {
+                score += 2;
+                continue;
+            }
+
+            return -1;
+        }
+
+        return score;
+    }
+
+    private static bool CanAdaptArgument(Type expectedType, object arg)
+    {
+        var targetType = Nullable.GetUnderlyingType(expectedType) ?? expectedType;
+
+        if (targetType.FullName is "Oxygen.Csharp.API.PlayerBase" or
+            "Oxygen.Csharp.API.KillInfo" or
+            "Oxygen.Csharp.API.DeathData" or
+            "Oxygen.Csharp.API.PlayerRespawnData" or
+            "Oxygen.Csharp.API.PlayerLockPickData" or
+            "Oxygen.Csharp.API.Vector3")
+        {
+            return true;
+        }
+
+        if (targetType.IsEnum)
+            return true;
+
+        if (targetType.IsPrimitive || targetType == typeof(decimal) || targetType == typeof(string))
+            return true;
+
+        return false;
     }
 
     private static object? InvokeMethod(object instance, MethodInfo method, params object?[] args)
@@ -1295,6 +1449,15 @@ WHERE lower(be.asset) LIKE '%flag%'";
         if (targetType.FullName == "Oxygen.Csharp.API.KillInfo")
             return CloneKillInfo(targetType, arg);
 
+        if (targetType.FullName == "Oxygen.Csharp.API.DeathData")
+            return CloneDeathData(targetType, arg);
+
+        if (targetType.FullName == "Oxygen.Csharp.API.PlayerRespawnData")
+            return ClonePlainObject(targetType, arg, "SpawnLocationType", "SectorX", "SectorY");
+
+        if (targetType.FullName == "Oxygen.Csharp.API.PlayerLockPickData")
+            return ClonePlainObject(targetType, arg, "Target", "TargetId", "OwnerSteamId", "OwnerName", "Result", "FailCount");
+
         if (targetType.FullName == "Oxygen.Csharp.API.Vector3")
             return CloneVector3(targetType, arg);
 
@@ -1321,6 +1484,14 @@ WHERE lower(be.asset) LIKE '%flag%'";
         CopyMemberValue(source, clone, "IpAddress");
         CopyMemberValue(source, clone, "DatabaseId");
         CopyMemberValue(source, clone, "Money");
+        CopyMemberValue(source, clone, "FakeName");
+        CopyMemberValue(source, clone, "Ping");
+        CopyMemberValue(source, clone, "FamePoints");
+        CopyMemberValue(source, clone, "Gold");
+        CopyMemberValue(source, clone, "NativePlayerId");
+        CopyMemberValue(source, clone, "ItemInHands");
+        CopyMemberValue(source, clone, "QuickAccessItems");
+        CopyMemberValue(source, clone, "LastNativeUpdate");
 
         var sourceLocation = GetMemberValue(source, "Location");
         if (sourceLocation != null)
@@ -1332,6 +1503,32 @@ WHERE lower(be.asset) LIKE '%flag%'";
             }
         }
 
+        return clone;
+    }
+
+    private static object CloneDeathData(Type expectedType, object source)
+    {
+        var clone = Activator.CreateInstance(expectedType)!;
+
+        if (source.GetType().FullName == "Oxygen.Csharp.API.KillInfo")
+        {
+            SetMemberValue(clone, "Reason", GetMemberValue(source, "Weapon") ?? string.Empty);
+            SetMemberValue(clone, "Distance", Convert.ToSingle(GetMemberValue(source, "Distance") ?? 0f, CultureInfo.InvariantCulture));
+            SetMemberValue(clone, "DeadType", Convert.ToBoolean(GetMemberValue(source, "IsSuicide") ?? false, CultureInfo.InvariantCulture) ? "Suicide" : "Player");
+            SetMemberValue(clone, "Event", false);
+            return clone;
+        }
+
+        return ClonePlainObject(expectedType, source, "KillerId", "KillerName", "DeadType", "Reason", "Event", "Distance");
+    }
+
+    private static object ClonePlainObject(Type expectedType, object source, params string[] members)
+    {
+        var clone = Activator.CreateInstance(expectedType)!;
+        foreach (var member in members)
+        {
+            CopyMemberValue(source, clone, member);
+        }
         return clone;
     }
 

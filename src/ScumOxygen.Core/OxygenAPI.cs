@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using ScumOxygen.Core.Models;
 
@@ -66,6 +67,7 @@ public readonly struct Color
     }
 
     public static readonly Color Red = new(255, 60, 60);
+    public static readonly Color White = new(255, 255, 255);
     public static readonly Color Green = new(80, 255, 120);
     public static readonly Color Yellow = new(255, 220, 80);
     public static readonly Color Blue = new(80, 160, 255);
@@ -100,26 +102,105 @@ public sealed class KillInfo
     public bool IsSuicide { get; init; }
 }
 
+public sealed class DeathData
+{
+    public string KillerId { get; init; } = string.Empty;
+    public string KillerName { get; init; } = string.Empty;
+    public string DeadType { get; init; } = string.Empty;
+    public string Reason { get; init; } = string.Empty;
+    public bool Event { get; init; }
+    public float Distance { get; init; }
+}
+
+public sealed class PlayerRespawnData
+{
+    public int SpawnLocationType { get; init; }
+    public int SectorX { get; init; }
+    public int SectorY { get; init; }
+}
+
+public sealed class PlayerLockPickData
+{
+    public string Target { get; init; } = string.Empty;
+    public string TargetId { get; init; } = string.Empty;
+    public string OwnerSteamId { get; init; } = string.Empty;
+    public string OwnerName { get; init; } = string.Empty;
+    public int Result { get; init; }
+    public int FailCount { get; init; }
+}
+
+public sealed class Item
+{
+    private readonly PlayerBase? _player;
+
+    internal Item(string name, PlayerBase? player = null, IEnumerable<Item>? contents = null)
+    {
+        Name = name;
+        _player = player;
+        Contents = (contents ?? Array.Empty<Item>()).ToList().AsReadOnly();
+    }
+
+    public string Name { get; }
+    public IReadOnlyList<Item> Contents { get; }
+
+    public void Destroy()
+    {
+        // Full per-item destroy needs native entity bindings; keep the API shape ready.
+        _player?.ProcessCommand($"DestroyItem {Name}");
+    }
+
+    public Item SetDurability(float percent)
+    {
+        _player?.ProcessCommand($"SetItemDurability {Name} {percent:0.##}");
+        return this;
+    }
+
+    public Item SetAmmo(int count, string? ammoName = null)
+    {
+        var suffix = string.IsNullOrWhiteSpace(ammoName) ? string.Empty : $" {ammoName}";
+        _player?.ProcessCommand($"SetItemAmmo {Name} {count}{suffix}");
+        return this;
+    }
+}
+
 public sealed class PlayerInventory
 {
     private readonly PlayerBase _player;
+    private IReadOnlyList<Item> _all = Array.Empty<Item>();
+
     internal PlayerInventory(PlayerBase player) => _player = player;
 
-    public void Clear()
+    public IReadOnlyList<Item> All => _all;
+    public int Count => _all.Count;
+
+    public int Clear()
     {
-        // Best-effort: not all servers support this command.
+        var removed = _all.Count;
+        _all = Array.Empty<Item>();
         _player.ProcessCommand("ClearInventory");
+        return removed;
+    }
+
+    internal void SetSnapshot(IReadOnlyList<Item> items)
+    {
+        _all = items ?? Array.Empty<Item>();
     }
 }
 
 public sealed class PlayerBase
 {
     public string SteamId { get; internal set; } = string.Empty;
+    public string Steamid => SteamId;
     public string Name { get; internal set; } = string.Empty;
+    public string CharacterName => Name;
+    public string FakeName { get; internal set; } = string.Empty;
     public string IpAddress { get; internal set; } = string.Empty;
     public int DatabaseId { get; internal set; }
     public int NativePlayerId { get; internal set; }
+    public int Ping { get; internal set; }
+    public int FamePoints { get; internal set; }
     public int Money { get; internal set; }
+    public int Gold { get; internal set; }
     public Vector3 Location { get; internal set; }
     public string ItemInHands { get; internal set; } = string.Empty;
     public IReadOnlyList<string> QuickAccessItems { get; internal set; } = Array.Empty<string>();
@@ -179,16 +260,25 @@ public sealed class PlayerBase
         return CommandResponse.From(res);
     }
 
-    public void GiveItem(string item)
+    public Item? GiveItem(string item)
     {
-        if (string.IsNullOrWhiteSpace(item)) return;
+        if (string.IsNullOrWhiteSpace(item)) return null;
         ProcessCommand($"GiveItem {item}");
+        var created = new Item(item, this);
+        Inventory.SetSnapshot(Inventory.All.Concat(new[] { created }).ToList().AsReadOnly());
+        return created;
     }
 
-    public void EquipItem(string item)
+    public Item? EquipItem(string item)
     {
-        if (string.IsNullOrWhiteSpace(item)) return;
+        if (string.IsNullOrWhiteSpace(item)) return null;
         ProcessCommand($"EquipItem {item}");
+        ItemInHands = item;
+        var equipped = new Item(item, this);
+        var items = new List<Item> { equipped };
+        items.AddRange(Inventory.All.Where(x => !string.Equals(x.Name, item, StringComparison.OrdinalIgnoreCase)));
+        Inventory.SetSnapshot(items.AsReadOnly());
+        return equipped;
     }
 
     private static string Escape(string msg)

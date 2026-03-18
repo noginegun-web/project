@@ -67,10 +67,16 @@ public abstract class OxygenPlugin
     // Player events
     public virtual void OnPlayerConnected(PlayerBase player) { }
     public virtual void OnPlayerDisconnected(PlayerBase player) { }
+    public virtual void OnPlayerRespawn(PlayerBase player, PlayerRespawnData data) { }
     public virtual void OnPlayerRespawned(PlayerBase player) { }
+    public virtual bool OnPlayerMeleeAttack(PlayerBase player, string victimName) => true;
+    public virtual void OnPlayerMiniGameEnded(PlayerBase player, string gameName, bool succeeded) { }
+    public virtual void OnPlayerOpenInventory(PlayerBase player, string itemName, int ownerDBId, int entityId) { }
     public virtual bool OnPlayerTakeItemInHands(PlayerBase player, string itemName) => true;
+    public virtual void OnPlayerLockPickEnded(PlayerBase player, PlayerLockPickData data) { }
     public virtual bool OnPlayerChat(PlayerBase player, string message, int chatType) => true;
     public virtual void OnPlayerDeath(PlayerBase victim, PlayerBase? killer, KillInfo info) { }
+    public virtual void OnPlayerDeath(PlayerBase player, DeathData info) { }
     public virtual void OnPlayerKill(PlayerBase killer, PlayerBase victim, KillInfo info) { }
 
     // Helpers
@@ -91,6 +97,22 @@ public abstract class OxygenPlugin
             var interval = TimeSpan.FromSeconds(seconds);
             var id = Guid.NewGuid();
             var timer = new Timer(_ => action(), null, interval, interval);
+            FallbackTimers[id] = timer;
+            return id;
+        }
+    }
+
+    protected Guid After(float seconds, Action action)
+    {
+        try
+        {
+            return global::Oxygen.Csharp.API.Oxygen.Timers.After(TimeSpan.FromSeconds(seconds), action);
+        }
+        catch
+        {
+            var delay = TimeSpan.FromSeconds(seconds);
+            var id = Guid.NewGuid();
+            var timer = new Timer(_ => action(), null, delay, Timeout.InfiniteTimeSpan);
             FallbackTimers[id] = timer;
             return id;
         }

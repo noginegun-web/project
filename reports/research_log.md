@@ -1,0 +1,233 @@
+# Research Log
+
+
+## 2026-03-17 17:41:42
+- Task: End-to-end functional check (server + control panel) and fix failures.
+- Plan: Start server, verify plugin connect, test panel API commands, inspect logs, fix.
+
+
+### Results
+- Success: Control panel running on port 18800 and reachable.
+- Success: SCUMServer launched (PID observed) and ControlClient connected (server appears in /api/servers).
+- Success: Plugins compiled and loaded (anti-vpn, CustomSpawnItems, DynamicWeather, fastTravel, ItemRestriction, PrivateMessages, SamplePlugin, sethome, VehicleRental).
+- Success: Command pipeline works via file-queue + UE4SS bridge (announce OxygenTest executed; UE4SS log confirms).
+- Partial: /api/chat returns empty when no chat log entries; needs in-game activity.
+- Partial: /api/players empty without active players; RCON disabled so only login log based updates.
+- Partial: /api/squads returns empty (placeholder).
+
+
+### Attempt
+- Action: Rebuilt ScumOxygen.Core and tried hot-copy into server folder while SCUMServer running.
+- Result: Failed to copy DLL/PDB (file in use by SCUMServer).
+- Fix plan: Stop SCUMServer, replace files, restart server.
+
+
+### Results
+- Success: SCUM client started with -log -fileopenlog (SCUM.exe running, client log updated at C:\Users\User\AppData\Local\SCUM\Saved\Logs\SCUM.log).
+- Note: Server log shows bind on port 7777.
+- Known issue: ReloadPlugin currently unloads but does not re-load (needs server restart to deploy fix).
+
+
+## 2026-03-17 17:49:37
+- Task: Investigate incorrect IP for client connect and server crash.
+
+
+### Fix
+- Change: Guard plugin command/hook/invoke with try/catch to prevent unhandled exceptions from crashing server.
+
+### Results
+- Crash evidence: CrashContext shows unhandled CLR exception 0xe0434352 in SCUMServer (coreclr). Likely unhandled exception from managed plugin code.
+- Fix applied: Wrapped plugin invoke/commands/hooks with try/catch to prevent managed exceptions from crashing server.
+- Control panel restart required after server restart; panel now reachable and server connected.
+- IPs discovered: LAN 192.168.3.2, WSL 172.19.240.1, VPN 172.16.0.1. Server bound to 0.0.0.0:7777 (see SCUM.log).
+
+
+## 2026-03-17 17:59:43
+- Task: Diagnose client connection failure to local SCUM dedicated server.
+- Plan: Inspect SCUMServer command line, log ports, UDP listeners, config files; verify expected connect IP/port.
+
+
+### External Research
+- Source: Host Havoc SCUM connect guide -> client connection port is configured port + 2.
+- Source: SCUM dedicated server setup wiki -> UDP game port (7777), raw UDP port (7778), TCP query port (7779) and note query port constraints. 
+
+
+### Fix
+- Action: Restart server with -nobattleye to prevent BattlEye kicks ('Game restart required').
+
+### Result
+- Failure cause: Server log shows BattlEye kicking player with reason 'Game restart required' immediately before disconnect. Likely BE update/installation issue.
+
+
+### Fix
+- Action: Started BattlEye service (BEService) and restarted SCUMServer without -nobattleye to avoid BE 'Game restart required' kicks.
+
+### Evidence
+- Server log shows BattlEye kick: 'Kicked player log323 for the following reason: Game restart required' right before disconnect.
+- Client log shows successful join to 192.168.3.2:7777 then ConnectionLost after kick.
+- Action: Started BEService (Battleye service) and restarted SCUMServer.
+
+
+## 2026-03-17 18:21:22
+- Task: Fix BE kick ('Game restart required') despite client BE installed; verify server BattlEye files and version.
+
+
+### Diagnosis
+- Server log shows BE kick 'Game restart required' right before disconnect. Likely BattlEye server components missing/outdated on dedicated server install.
+
+
+### Fix Attempt
+- Action: Update dedicated server via SteamCMD (appid 3792580) to ensure BattlEye server files present and up to date.
+
+## 2026-03-17 18:29:12 - SCUM client disconnect investigation
+**Success:**
+- Found client log error: BattlEye communication component can't access BattlEye client (client log).
+- Verified server BattlEye initialized successfully (server log).
+- SteamCMD update completed; appmanifest buildid 22072605.
+- BEService started (client).
+
+**Failed/Blocked:**
+- Server-side BattlEye logs not found under D:\SCUM_Dedicated\BattlEye (no *.log present).
+- Unable to set BEService startup type to Automatic (access denied without elevation).
+
+**Actions Taken:**
+- Ran Install_BattlEye.bat from client SCUM folder (RunAs).
+- Started BEService.
+- Collected steamcmd content_log updates and confirmed install path contents.
+
+
+## 2026-03-17 18:31:42 - Root cause identified
+**Success:**
+- Found client was launched with -nobattleye (confirmed via Win32_Process command line).
+- Restarted SCUM client without -nobattleye; kept -fileopenlog.
+- SCUMServer listening on UDP 7777 and 27015.
+
+**Next:**
+- Connect to 192.168.3.2:7777 and verify no BattlEye error in client log.
+
+
+## 2026-03-17 18:45:03 - Server name + UE4SS client cleanup
+**Success:**
+- Set scum.ServerName=KolinsFer in ServerSettings.ini.
+- Restarted SCUMServer with -fileopenlog and ports 7777/27015.
+- Moved client UE4SS files out of SCUM to avoid BattlEye kicks.
+
+**Details:**
+- UE4SS backup path: C:\Users\User\Desktop\UE4SS_BACKUP_2026-03-17
+
+
+## 2026-03-17 19:30:13 - YouTube Oxygen channel attempt
+**Success:**
+- Retrieved video list via yt-dlp (7 videos) from channel @jemixs9655.
+
+**Failed/Blocked:**
+- YouTube metadata/subtitles download timed out (bmTyX7SPVp4) despite retries; unable to fetch descriptions/subtitles.
+
+**Next:**
+- Need specific video URLs or longer/alternative access to pull transcripts for deep analysis.
+
+
+## 2026-03-17 19:48:08 - Kill log parsing added
+**Success:**
+- Added KillInfo API + OnPlayerDeath/OnPlayerKill hooks.
+- Added kill_*.log and event_kill_*.log tailers with JSON parser.
+- Built ScumOxygen.Core and deployed to server + deploy bundle.
+
+**Failed/Blocked:**
+- YouTube video analysis still blocked by timeouts; videos appear to be silent (no transcript).
+
+
+## 2026-03-17 21:15:00 - Panel without server-side .exe
+**Success:**
+- Перевёл панель на прямое HTTP API внутри плагина (без ScumOxygen.Control).
+- Добавил CORS + API key защиту + allowlist IP в WebApiService.
+- Добавил endpoints: /api/servers, /api/players, /api/chat, /api/kills, /api/squads, /api/command, /api/broadcast.
+- Реализован вывод отрядов через SCUM.db (SQLite). При ошибке возвращает пустой список и логирует.
+- Панель обновлена: поля IP:PORT + API key, сохранение в localStorage, прямые запросы к API.
+- Обновлён deploy: LOCAL_PANEL (HTML/JS), runtime.json (новые поля), control.json отключён.
+
+**Failed/Blocked:**
+- HTTP порт на хостинге может быть закрыт firewall'ом — требуется проверка после выгрузки (без теста на хостинге).
+
+
+## 2026-03-17 21:48:00 - Hosted bootstrap fix for FTP-only SCUM hosting
+**Success:**
+- Найдена точная причина падения стартового пакета на хостинге: `version.dll` зависел от системного `nethost.dll`, а пакет не содержал app-local .NET runtime.
+- Убрана зависимость от `nethost.dll`: proxy теперь грузит `hostfxr.dll` из `ScumOxygen\dotnet\host\fxr\<version>\hostfxr.dll`.
+- В пакет добавлен app-local runtime `Microsoft.NETCore.App 8.0.25`, чтобы хостингу не требовалась установленная .NET 8.
+- Исправлено несовпадение путей: managed-часть теперь работает от `Win64\ScumOxygen\...`, а не от `Win64\...`.
+- `HttpListener` заменён на встроенный TCP HTTP server без URL ACL, чтобы веб-панель не требовала `netsh http add urlacl` на хостинге.
+- Drop-in пакет локально протестирован через загрузку `version.dll`: bootstrap прошёл, `Oxygen.log` создан, `/api/status` ответил `{\"rcon\":false,\"players\":0}`, `/` вернул HTTP 200.
+
+**Failed/Blocked:**
+- Хостинг всё ещё может блокировать входящий TCP-порт 8090 firewall'ом; это нельзя подтвердить локально без реального деплоя.
+- `DynamicWeather.cs` и `SamplePlugin.cs` дают `NullReferenceException` в `OnLoad/OnPluginInit` в тестовом bootstrap-сценарии, но ядро не падает, потому что ошибки изолированы try/catch.
+
+**What changed:**
+- `src/ScumOxygen.ServerProxy/version.cpp`
+- `src/ScumOxygen.ServerProxy/CMakeLists.txt`
+- `src/ScumOxygen.Core/OxygenPaths.cs`
+- `src/ScumOxygen.Core/OxygenRuntime.cs`
+- `src/ScumOxygen.Core/WebApiService.cs`
+- `src/ScumOxygen.Core/ApiController.cs`
+- `scripts/Build-HostedPackage.ps1`
+- `scripts/Test-HostedBootstrap.ps1`
+
+
+## 2026-03-18 11:55:00 - Oxygen parity audit + compatibility foundation
+**Success:**
+- Pulled and reviewed original Oxygen docs/public plugin sources:
+  - installing plugins
+  - player API
+  - web API
+  - actors
+  - hook docs
+  - public `oxygen.plugins`
+- Identified the main architectural gap:
+  - our native hook layer still stops at `HookProcessEvent()` TODO
+  - `HookChatMessage()` is also not finished
+- Rebuilt permissions toward Oxygen-style behavior:
+  - `oxygen.users.json`
+  - `oxygen.groups.json`
+  - wildcard support
+  - group inheritance
+  - legacy import from flat permissions
+- Added missing compatibility surface for public Oxygen-style plugins:
+  - `PermissionManager`
+  - `DeathData`
+  - `PlayerRespawnData`
+  - `PlayerLockPickData`
+  - `Item`
+  - expanded `PlayerInventory`
+  - expanded `PlayerBase`
+  - `After(...)` helper
+  - extra `OxygenPlugin` hook signatures
+- Verified `ScumOxygen.Core` builds in Release.
+- Verified public `AdminManager.cs` from `oxygen.plugins` now compiles against our core.
+- Verified a synthetic docs-compat plugin compiles with:
+  - `OnPlayerOpenInventory`
+  - `OnPlayerRespawn`
+  - `OnPlayerLockPickEnded`
+  - `OnPlayerDeath(PlayerBase, DeathData)`
+  - `Inventory.All`
+  - `GiveItem(...).SetDurability(...)`
+  - `After(...)`
+
+**Failed/Blocked:**
+- Full solution build still blocked by pre-existing target mismatch:
+  - `ScumOxygen.Core` = `net8.0-windows7.0`
+  - sibling projects/tests still reference `net8.0`
+- Runtime parity is still incomplete because API compatibility is now ahead of native data extraction.
+- Full Oxygen-style web/plugin parity still needs:
+  - real ProcessEvent-based hooking
+  - entity-backed inventory
+  - actor-backed live map layers
+  - plugin-level `StartWebServer/WebRoute`
+
+**Files changed:**
+- `src/ScumOxygen.Core/PermissionService.cs`
+- `src/ScumOxygen.Core/PermissionManager.cs`
+- `src/ScumOxygen.Core/OxygenAPI.cs`
+- `src/ScumOxygen.Core/OxygenAttributes.cs`
+- `src/ScumOxygen.Core/OxygenRuntime.cs`
+- `reports/oxygen_parity_gap_2026-03-18.md`
